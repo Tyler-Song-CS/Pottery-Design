@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>ClayForm Designer</title>
+    <link rel="stylesheet" href="styles.css?v=20260623-clay-footer-2">
+  </head>
+  <body>
+    <main class="app-shell" aria-label="ClayForm pottery profile designer">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">ClayForm</p>
+          <h1>Small vase</h1>
+        </div>
+        <div class="top-actions" aria-label="Document actions">
+          <button class="icon-button dark" type="button" aria-label="Save">S</button>
+        </div>
+      </header>
+
+      <nav class="tabs" aria-label="Workflow">
+        <button class="tab active" type="button">Design</button>
+        <button class="tab" type="button">Template</button>
+      </nav>
+
+      <section class="canvas-card" aria-labelledby="canvasTitle">
+        <div class="canvas-header">
+          <h2 id="canvasTitle">Profile</h2>
+          <div class="legend" aria-label="Line legend">
+            <span><i class="legend-dot outer-dot"></i>Outer</span>
+            <span><i class="legend-dot inner-dot"></i>Inner</span>
+          </div>
+        </div>
+        <svg id="profileCanvas" class="profile-canvas" viewBox="0 0 588 640" role="img" aria-label="Editable pottery section drawing"></svg>
+      </section>
+
+      <section class="panel section-panel" aria-labelledby="sectionTitle">
+        <div class="panel-header">
+          <h2 id="sectionTitle">Edit</h2>
+          <div class="line-toggle" aria-label="Editing line">
+            <button id="outerLineButton" class="active" type="button">Outer</button>
+            <button id="innerLineButton" type="button">Inner</button>
+          </div>
+        </div>
+
+        <div class="section-chips" role="group" aria-label="Profile editing">
+          <button id="pointModeButton" class="section-chip active" type="button">Point</button>
+          <button id="segmentModeButton" class="section-chip" type="button">Segment</button>
+          <button id="addPointButton" class="section-chip" type="button">Add</button>
+          <button id="deletePointButton" class="section-chip" type="button">Delete</button>
+        </div>
+
+        <div class="selected-row">
+          <span>Selected</span>
+          <strong id="selectedLabel">Belly point</strong>
+          <button id="fullViewButton" type="button">Reset view</button>
+        </div>
+      </section>
+
+      <section class="panel controls-panel" aria-labelledby="controlsTitle">
+        <div class="panel-header">
+          <h2 id="controlsTitle">Point controls</h2>
+          <label class="toggle">
+            <input id="uniformWallToggle" type="checkbox" checked>
+            <span>Uniform wall</span>
+          </label>
+        </div>
+
+        <div id="sectionControls" class="control-stack"></div>
+      </section>
+
+      <footer class="bottom-bar" aria-label="Design settings">
+        <button id="clayEstimate" class="bottom-field clay-field" type="button" aria-label="Clay estimate details">
+          <span>Clay needed</span>
+          <strong id="clayEstimateValue">1.7 lb</strong>
+        </button>
+        <div class="basis-toggle" role="group" aria-label="Size basis">
+          <button id="finishedBasis" class="active" type="button">Finished size</button>
+          <button id="wetBasis" type="button">Wet size</button>
+        </div>
+        <label class="bottom-field shrink-field">
+          <span>Shrinkage</span>
+          <span class="shrink-value">
+            <input id="shrinkageInput" type="number" min="0" max="30" step="0.5" value="12">
+            <span>%</span>
+          </span>
+        </label>
+      </footer>
+    </main>
+
+    <template id="rangeControlTemplate">
+      <label class="range-control">
+        <span class="control-label"></span>
+        <input type="range">
+        <output></output>
+      </label>
+    </template>
+
+    <script src="app.js?v=20260623-clay-footer-2" defer></script>
+  </body>
+</html>
