@@ -704,25 +704,6 @@ function handle(point, line, className = "svg-point-control") {
   return `<circle class="${cssClass}" data-line="${line}" data-point="${point.id}" cx="${mapped.x}" cy="${mapped.y}" r="${radius}"/>`;
 }
 
-function linkedPointHandle() {
-  if (!state.uniformWall || state.selectedKind !== "point") {
-    return "";
-  }
-
-  const linkedLine = state.editingLine === "outer" ? "inner" : "outer";
-  const linkedPoint = (linkedLine === "outer" ? state.outerPoints : innerProfilePoints())
-    .find((point) => point.id === state.selectedPointId);
-
-  if (!linkedPoint) {
-    return "";
-  }
-
-  const g = profileGeometry();
-  const mapped = g.mapPoint(linkedPoint, "right");
-
-  return `<circle class="svg-point-linked-active" cx="${mapped.x}" cy="${mapped.y}" r="13"/>`;
-}
-
 function segmentHitPath(points, line, segmentId, active) {
   const g = profileGeometry();
   const [firstId, secondId] = segmentId.split("-");
@@ -757,18 +738,12 @@ function renderSegmentHits(points, line) {
   }).join("");
 }
 
-function renderCurveControls(points, line, options = {}) {
+function renderCurveControls(points, line) {
   const g = profileGeometry();
-  const linked = Boolean(options.linked);
-  const onlySegments = options.onlySegments || null;
 
   return points.slice(0, -1).map((point, index) => {
     const nextPoint = points[index + 1];
     const segmentId = segmentKey(point.id, nextPoint.id);
-
-    if (onlySegments && !onlySegments.has(segmentId) && !onlySegments.has(reverseSegmentKey(segmentId))) {
-      return "";
-    }
 
     if (styleForSegment(point.id, nextPoint.id) !== "curve") {
       return "";
@@ -777,19 +752,13 @@ function renderCurveControls(points, line, options = {}) {
     const start = g.mapPoint(point, "right");
     const end = g.mapPoint(nextPoint, "right");
     const control = mappedCurveControl(line, segmentId, "right", start, end);
-    const active = !linked
-      && state.selectedKind === "segment"
+    const active = state.selectedKind === "segment"
       && state.selectedSegmentId === segmentId
       && state.editingLine === line;
-    const radius = active ? 13 : linked ? 7 : 10;
+    const radius = active ? 13 : 10;
     const cssClass = active
       ? "svg-curve-control-active"
-      : linked
-        ? "svg-curve-control-linked"
-        : "svg-curve-control";
-    const handleAttributes = linked
-      ? ""
-      : `data-line="${line}" data-curve="${segmentId}"`;
+      : "svg-curve-control";
     const guide = active
       ? `<path class="svg-curve-guide" d="M${start.x} ${start.y} L${control.x} ${control.y} L${end.x} ${end.y}"/>`
       : "";
@@ -797,30 +766,13 @@ function renderCurveControls(points, line, options = {}) {
     return `
       ${guide}
       <circle class="${cssClass}"
-        ${handleAttributes}
+        data-line="${line}"
+        data-curve="${segmentId}"
         cx="${control.x}"
         cy="${control.y}"
         r="${radius}"/>
     `;
   }).join("");
-}
-
-function renderLinkedCurveControls() {
-  if (!state.uniformWall) {
-    return "";
-  }
-
-  const activePoints = activeLinePoints();
-  const activeSegments = new Set(
-    activePoints.slice(0, -1).map((point, index) => segmentKey(point.id, activePoints[index + 1].id))
-  );
-  const linkedLine = state.editingLine === "outer" ? "inner" : "outer";
-  const linkedPoints = linkedLine === "outer" ? state.outerPoints : innerProfilePoints();
-
-  return renderCurveControls(linkedPoints, linkedLine, {
-    linked: true,
-    onlySegments: activeSegments
-  });
 }
 
 function renderDimensionLabels() {
@@ -854,9 +806,9 @@ function renderCanvas() {
   const innerRight = mappedInner("right");
   const innerLeft = mappedInner("left");
   const activePoints = activeLinePoints();
-  const handles = `${linkedPointHandle()}${activePoints.map((point) => handle(point, state.editingLine)).join("")}`;
+  const handles = activePoints.map((point) => handle(point, state.editingLine)).join("");
   const segmentHits = renderSegmentHits(activePoints, state.editingLine);
-  const curveControls = `${renderLinkedCurveControls()}${renderCurveControls(activePoints, state.editingLine)}`;
+  const curveControls = renderCurveControls(activePoints, state.editingLine);
   const outerRimRight = outerRight[0];
   const outerRimLeft = outerLeft[0];
   const innerRimRight = innerRight[0];

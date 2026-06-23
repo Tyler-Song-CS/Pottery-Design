@@ -459,8 +459,6 @@ button {
 .svg-segment-active,
 .svg-segment-hit,
 .svg-curve-guide,
-.svg-curve-control-linked,
-.svg-point-linked-active,
 .svg-label,
 .svg-label-small,
 .svg-pill {
@@ -556,14 +554,6 @@ button {
   stroke-width: 5;
 }
 
-.svg-point-linked-active {
-  fill: #d9e4dd;
-  stroke: var(--green-dark);
-  stroke-width: 4;
-  stroke-dasharray: 4 4;
-  opacity: 0.92;
-}
-
 .svg-point-control {
   fill: #f7f0e2;
   stroke: #746b60;
@@ -583,14 +573,6 @@ button {
 .svg-curve-control-active {
   fill: #f5d5a0;
   stroke-width: 5;
-}
-
-.svg-curve-control-linked {
-  fill: #dce9e1;
-  stroke: #2d5547;
-  stroke-width: 3;
-  opacity: 0.52;
-  pointer-events: none;
 }
 
 .svg-inner-point {
