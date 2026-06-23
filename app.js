@@ -66,6 +66,8 @@ const state = {
   }
 };
 
+const outerOnlyPointIds = new Set(["foot", "base"]);
+
 let dragHandle = null;
 let panGesture = null;
 let pinchGesture = null;
@@ -102,6 +104,21 @@ function outputText(finishedValue) {
 
 function titleCase(text) {
   return `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+}
+
+function isOuterOnlyPoint(pointOrId) {
+  const id = typeof pointOrId === "string" ? pointOrId : pointOrId?.id;
+  return outerOnlyPointIds.has(id) || Boolean(pointOrId?.outerOnly);
+}
+
+function isOuterOnlySegment(first, second) {
+  return isOuterOnlyPoint(first) || isOuterOnlyPoint(second);
+}
+
+function footReferencePoint() {
+  return state.outerPoints.find((point) => point.id === "foot")
+    || state.outerPoints.at(-1)
+    || state.outerPoints[0];
 }
 
 function sortedPoints(points) {
@@ -220,7 +237,7 @@ function derivedInnerPoints() {
   const points = [];
 
   state.outerPoints.forEach((point) => {
-    if (point.height <= floorHeight + 0.03 || point.fixed === "base") {
+    if (isOuterOnlyPoint(point) || point.height <= floorHeight + 0.03) {
       return;
     }
 
@@ -233,7 +250,10 @@ function derivedInnerPoints() {
     });
   });
 
-  const floorRadius = Math.max(0.12, state.outerPoints.at(-1).radius - state.wallThickness);
+  const footPoint = footReferencePoint();
+  const floorRadius = footPoint
+    ? Math.max(0.12, footPoint.radius - state.wallThickness)
+    : Math.max(0.12, state.outerPoints[0].radius - state.wallThickness);
   points.push({
     id: "floor",
     label: "Interior floor",
@@ -268,10 +288,18 @@ function normalizeInnerPoints() {
   ensureCustomInner();
   const minGap = 0.18;
   const outerById = new Map(state.outerPoints.map((point) => [point.id, point]));
+  state.innerPoints = state.innerPoints.filter((point) => {
+    if (point.fixed === "floor" || point.id === "floor") {
+      return true;
+    }
+
+    const outer = outerById.get(point.id);
+    return !isOuterOnlyPoint(point) && !isOuterOnlyPoint(outer);
+  });
 
   state.innerPoints.forEach((point, index) => {
     const outer = outerById.get(point.id);
-    const maxRadius = outer ? outer.radius - 0.08 : state.outerPoints.at(-1).radius - 0.08;
+    const maxRadius = outer ? outer.radius - 0.08 : footReferencePoint().radius - 0.08;
     point.radius = clamp(point.radius, 0.12, Math.max(0.14, maxRadius));
 
     if (point.fixed === "floor" || point.id === "floor") {
@@ -863,6 +891,7 @@ function makeRangeControl(definition) {
   const labelNode = fragment.querySelector(".control-label");
   const input = fragment.querySelector("input");
   const output = fragment.querySelector("output");
+  let activePointerId = null;
 
   labelNode.textContent = definition.label;
   input.min = definition.min;
@@ -885,19 +914,34 @@ function makeRangeControl(definition) {
 
   input.addEventListener("pointerdown", (event) => {
     event.preventDefault();
-    input.setPointerCapture(event.pointerId);
+    activePointerId = event.pointerId;
+    try {
+      input.setPointerCapture(event.pointerId);
+    } catch {
+      // Some embedded mobile browsers do not support range pointer capture.
+    }
     const rect = input.getBoundingClientRect();
     const ratio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
     updateValue(Number(definition.min) + ratio * (Number(definition.max) - Number(definition.min)));
   });
 
   input.addEventListener("pointermove", (event) => {
-    if (event.buttons !== 1) {
+    if (activePointerId !== event.pointerId) {
       return;
     }
+
+    event.preventDefault();
     const rect = input.getBoundingClientRect();
     const ratio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
     updateValue(Number(definition.min) + ratio * (Number(definition.max) - Number(definition.min)));
+  });
+
+  ["pointerup", "pointercancel", "lostpointercapture"].forEach((type) => {
+    input.addEventListener(type, (event) => {
+      if (activePointerId === event.pointerId || type === "lostpointercapture") {
+        activePointerId = null;
+      }
+    });
   });
 
   controlsRoot.appendChild(fragment);
@@ -1081,11 +1125,13 @@ function insertPointInSelectedSegment() {
   const insertAt = Math.max(firstIndex, secondIndex);
   const first = points[Math.min(firstIndex, secondIndex)];
   const second = points[Math.max(firstIndex, secondIndex)];
+  const newPointIsOuterOnly = isOuterOnlySegment(first, second);
   const newPoint = {
     id: `point${state.nextPointId}`,
     label: `Point ${state.nextPointId}`,
     height: (first.height + second.height) / 2,
-    radius: (first.radius + second.radius) / 2
+    radius: (first.radius + second.radius) / 2,
+    outerOnly: newPointIsOuterOnly
   };
   state.nextPointId += 1;
 
@@ -1105,7 +1151,7 @@ function insertPointInSelectedSegment() {
     state.segmentCurves[curveStorageKey("outer", secondSegmentId)] = segmentControlFromPoints(newPoint, second);
   }
 
-  if (!state.uniformWall && state.innerPoints.length > 0) {
+  if (!state.uniformWall && state.innerPoints.length > 0 && !newPoint.outerOnly) {
     const innerFirstIndex = pointIndex(state.innerPoints, first.id);
     const innerSecondIndex = pointIndex(state.innerPoints, second.id);
     const innerInsertAt = innerFirstIndex >= 0 && innerSecondIndex >= 0
@@ -1247,18 +1293,30 @@ function pointerMidpoint(first, second) {
   };
 }
 
-function startCanvasGesture(event) {
-  event.preventDefault();
-  activePointers.set(event.pointerId, {
-    clientX: event.clientX,
-    clientY: event.clientY
-  });
-
+function captureCanvasPointer(event) {
   try {
     svg.setPointerCapture(event.pointerId);
   } catch {
     // Pointer capture may be unavailable in embedded browsers.
   }
+}
+
+function releaseCanvasPointer(event) {
+  try {
+    svg.releasePointerCapture(event.pointerId);
+  } catch {
+    // Pointer capture may already be released.
+  }
+}
+
+function startCanvasGesture(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  activePointers.set(event.pointerId, {
+    clientX: event.clientX,
+    clientY: event.clientY
+  });
+  captureCanvasPointer(event);
 
   if (activePointers.size === 1) {
     panGesture = {
@@ -1317,6 +1375,7 @@ function moveCanvasGesture(event) {
   }
 
   if (activePointers.size === 1 && panGesture?.pointerId === event.pointerId) {
+    event.preventDefault();
     const dx = event.clientX - panGesture.clientX;
     const dy = event.clientY - panGesture.clientY;
 
@@ -1327,8 +1386,6 @@ function moveCanvasGesture(event) {
     if (currentZoom() <= 1.04) {
       return;
     }
-
-    event.preventDefault();
     const rect = svg.getBoundingClientRect();
     setCanvasView({
       x: panGesture.view.x - dx * panGesture.view.width / rect.width,
@@ -1342,6 +1399,7 @@ function moveCanvasGesture(event) {
 
 function endCanvasGesture(event) {
   activePointers.delete(event.pointerId);
+  releaseCanvasPointer(event);
 
   if (activePointers.size < 2) {
     pinchGesture = null;
@@ -1369,6 +1427,10 @@ function handleWheelZoom(event) {
   });
 }
 
+function preventCanvasNativeGesture(event) {
+  event.preventDefault();
+}
+
 svg.addEventListener("pointerdown", (event) => {
   const pointId = event.target?.dataset?.point;
   const line = event.target?.dataset?.line;
@@ -1378,7 +1440,8 @@ svg.addEventListener("pointerdown", (event) => {
   if (curveSegmentId && line) {
     event.preventDefault();
     event.stopPropagation();
-    dragHandle = { type: "curve", line, segmentId: curveSegmentId, moved: false };
+    captureCanvasPointer(event);
+    dragHandle = { type: "curve", line, segmentId: curveSegmentId, pointerId: event.pointerId, moved: false };
     selectSegment(curveSegmentId, line);
     render();
     return;
@@ -1387,7 +1450,8 @@ svg.addEventListener("pointerdown", (event) => {
   if (pointId && line) {
     event.preventDefault();
     event.stopPropagation();
-    dragHandle = { type: "point", line, pointId, moved: false };
+    captureCanvasPointer(event);
+    dragHandle = { type: "point", line, pointId, pointerId: event.pointerId, moved: false };
     selectPoint(line, pointId);
     return;
   }
@@ -1405,7 +1469,12 @@ svg.addEventListener("pointerdown", (event) => {
 
 svg.addEventListener("pointermove", (event) => {
   if (dragHandle) {
+    if (dragHandle.pointerId !== event.pointerId) {
+      return;
+    }
+
     event.preventDefault();
+    event.stopPropagation();
     dragHandle.moved = true;
 
     if (dragHandle.type === "curve") {
@@ -1422,19 +1491,30 @@ svg.addEventListener("pointermove", (event) => {
 });
 
 svg.addEventListener("pointerup", (event) => {
+  if (dragHandle && dragHandle.pointerId !== event.pointerId) {
+    return;
+  }
+
   if (dragHandle && !dragHandle.moved) {
     render();
   }
+  releaseCanvasPointer(event);
   dragHandle = null;
   endCanvasGesture(event);
 });
 
 svg.addEventListener("pointercancel", (event) => {
+  releaseCanvasPointer(event);
   dragHandle = null;
   endCanvasGesture(event);
 });
 
 svg.addEventListener("wheel", handleWheelZoom, { passive: false });
+svg.addEventListener("touchstart", preventCanvasNativeGesture, { passive: false });
+svg.addEventListener("touchmove", preventCanvasNativeGesture, { passive: false });
+svg.addEventListener("contextmenu", preventCanvasNativeGesture);
+svg.addEventListener("selectstart", preventCanvasNativeGesture);
+svg.addEventListener("dragstart", preventCanvasNativeGesture);
 
 svg.addEventListener("click", () => {
   if (suppressCanvasClick) {

@@ -23,6 +23,7 @@
 html,
 body {
   min-height: 100%;
+  overscroll-behavior: none;
 }
 
 body {
@@ -42,6 +43,8 @@ input {
 
 button {
   -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .app-shell {
@@ -51,6 +54,9 @@ button {
   padding: max(16px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom));
   background: var(--paper);
   box-shadow: 0 26px 60px var(--shadow);
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .topbar {
@@ -205,6 +211,9 @@ button {
     #f7f0e2;
   background-size: 100% 88px;
   touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .panel {
