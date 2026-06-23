@@ -394,6 +394,21 @@ button {
 .range-control input[type="range"] {
   width: 100%;
   accent-color: var(--green);
+  touch-action: none;
+}
+
+.range-control.is-disabled {
+  opacity: 0.52;
+}
+
+.range-control.is-disabled .control-label,
+.range-control.is-disabled output {
+  color: var(--faint);
+}
+
+.range-control input[type="range"]:disabled {
+  cursor: not-allowed;
+  accent-color: var(--faint);
 }
 
 .range-control output {
@@ -563,6 +578,20 @@ button {
   stroke-width: 5;
 }
 
+.svg-point-locked,
+.svg-point-locked-active {
+  fill: #eee6d6;
+  stroke: var(--faint);
+  stroke-width: 4;
+  opacity: 0.58;
+}
+
+.svg-point-locked-active {
+  stroke: var(--green-dark);
+  stroke-width: 5;
+  opacity: 0.72;
+}
+
 .svg-point-control {
   fill: #f7f0e2;
   stroke: #746b60;
@@ -608,10 +637,17 @@ button {
 .svg-point,
 .svg-point-active,
 .svg-point-control,
+.svg-point-locked,
+.svg-point-locked-active,
 .svg-curve-control,
 .svg-curve-control-active {
   cursor: grab;
   pointer-events: all;
+}
+
+.svg-point-locked,
+.svg-point-locked-active {
+  cursor: default;
 }
 
 @media (min-width: 700px) {

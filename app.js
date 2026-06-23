@@ -155,9 +155,31 @@ function styleForSegment(firstId, secondId) {
   return style;
 }
 
+function outerSegmentIdForInner(segmentId) {
+  const [firstId, secondId] = segmentId.split("-");
+  const footId = footReferencePoint()?.id || "foot";
+  const mapPointId = (pointId) => (pointId === "floor" ? footId : pointId);
+
+  return segmentKey(mapPointId(firstId), mapPointId(secondId));
+}
+
+function segmentStyleKeyForLine(line, segmentId) {
+  if (state.uniformWall && line === "inner") {
+    return outerSegmentIdForInner(segmentId);
+  }
+
+  return segmentId;
+}
+
+function styleForLineSegment(line, firstId, secondId) {
+  const segmentId = segmentStyleKeyForLine(line, segmentKey(firstId, secondId));
+  return styleForSegment(...segmentId.split("-"));
+}
+
 function setSegmentStyle(segmentId, style) {
-  state.segmentStyles[segmentId] = style;
-  delete state.segmentStyles[reverseSegmentKey(segmentId)];
+  const styleSegmentId = segmentStyleKeyForLine(state.editingLine, segmentId);
+  state.segmentStyles[styleSegmentId] = style;
+  delete state.segmentStyles[reverseSegmentKey(styleSegmentId)];
 
   if (style === "curve") {
     ensureCurveControlForLine(state.editingLine, segmentId);
@@ -269,6 +291,30 @@ function ensureCustomInner() {
   if (state.innerPoints.length === 0) {
     state.innerPoints = derivedInnerPoints().map((point) => ({ ...point }));
   }
+}
+
+function copyCurrentInnerProfileToCustom() {
+  const points = innerProfilePoints().map((point) => ({ ...point }));
+  const curveControls = points.slice(0, -1).map((point, index) => {
+    const nextPoint = points[index + 1];
+    const segmentId = segmentKey(point.id, nextPoint.id);
+
+    if (styleForLineSegment("inner", point.id, nextPoint.id) !== "curve") {
+      return null;
+    }
+
+    return [
+      segmentId,
+      { ...ensureCurveControlForLine("inner", segmentId, point, nextPoint) }
+    ];
+  }).filter(Boolean);
+
+  state.innerPoints = points;
+
+  curveControls.forEach(([segmentId, control]) => {
+    state.segmentCurves[curveStorageKey("inner", segmentId)] = control;
+    delete state.segmentCurves[curveStorageKey("inner", reverseSegmentKey(segmentId))];
+  });
 }
 
 function innerProfilePoints() {
@@ -572,14 +618,14 @@ function hasUniformCurveLink(line, segmentId) {
     return false;
   }
 
-  const [outerFirst, outerSecond] = pointsForSegment("outer", segmentId);
+  const [outerFirst, outerSecond] = pointsForSegment("outer", outerSegmentIdForInner(segmentId));
   const [innerFirst, innerSecond] = pointsForSegment("inner", segmentId);
 
   return Boolean(outerFirst && outerSecond && innerFirst && innerSecond);
 }
 
 function wallOffsetAtSegmentHeight(segmentId, height) {
-  const [outerFirst, outerSecond] = pointsForSegment("outer", segmentId);
+  const [outerFirst, outerSecond] = pointsForSegment("outer", outerSegmentIdForInner(segmentId));
   const [innerFirst, innerSecond] = pointsForSegment("inner", segmentId);
 
   if (!outerFirst || !outerSecond || !innerFirst || !innerSecond) {
@@ -597,10 +643,18 @@ function wallOffsetAtSegmentHeight(segmentId, height) {
 }
 
 function innerControlFromOuter(segmentId, outerControl) {
-  const offset = wallOffsetAtSegmentHeight(segmentId, outerControl.height);
+  const [innerFirst, innerSecond] = pointsForSegment("inner", segmentId);
+  const height = innerFirst && innerSecond
+    ? clamp(
+      outerControl.height,
+      Math.min(innerFirst.height, innerSecond.height),
+      Math.max(innerFirst.height, innerSecond.height)
+    )
+    : outerControl.height;
+  const offset = wallOffsetAtSegmentHeight(segmentId, height);
 
   return {
-    height: outerControl.height,
+    height,
     radius: Math.max(0.12, outerControl.radius - offset)
   };
 }
@@ -616,7 +670,8 @@ function outerControlFromInner(segmentId, innerControl) {
 
 function ensureCurveControlForLine(line, segmentId, fallbackFirst = null, fallbackSecond = null) {
   if (hasUniformCurveLink(line, segmentId)) {
-    return innerControlFromOuter(segmentId, ensureSegmentCurveControl("outer", segmentId));
+    const outerSegmentId = outerSegmentIdForInner(segmentId);
+    return innerControlFromOuter(segmentId, ensureSegmentCurveControl("outer", outerSegmentId));
   }
 
   return ensureSegmentCurveControl(line, segmentId, fallbackFirst, fallbackSecond);
@@ -624,7 +679,7 @@ function ensureCurveControlForLine(line, segmentId, fallbackFirst = null, fallba
 
 function setCurveControlForLine(line, segmentId, control) {
   if (hasUniformCurveLink(line, segmentId)) {
-    const key = segmentControlKey("outer", segmentId);
+    const key = segmentControlKey("outer", outerSegmentIdForInner(segmentId));
     state.segmentCurves[key] = outerControlFromInner(segmentId, control);
     return;
   }
@@ -671,7 +726,7 @@ function continuePathThrough(mappedPoints, line = "outer") {
   for (let index = 1; index < mappedPoints.length; index += 1) {
     const start = mappedPoints[index - 1];
     const end = mappedPoints[index];
-    d += ` ${segmentPath(start, end, styleForSegment(start.id, end.id), line)}`;
+    d += ` ${segmentPath(start, end, styleForLineSegment(line, start.id, end.id), line)}`;
   }
 
   return d;
@@ -726,10 +781,13 @@ function handle(point, line, className = "svg-point-control") {
   const active = state.selectedKind === "point"
     && state.selectedPointId === point.id
     && state.editingLine === line;
+  const locked = line === "inner" && state.uniformWall;
   const radius = active ? 14 : 10;
-  const cssClass = active ? "svg-point-active" : className;
+  const cssClass = locked
+    ? active ? "svg-point-locked-active" : "svg-point-locked"
+    : active ? "svg-point-active" : className;
 
-  return `<circle class="${cssClass}" data-line="${line}" data-point="${point.id}" cx="${mapped.x}" cy="${mapped.y}" r="${radius}"/>`;
+  return `<circle class="${cssClass}" data-line="${line}" data-point="${point.id}" data-locked="${locked}" cx="${mapped.x}" cy="${mapped.y}" r="${radius}"/>`;
 }
 
 function segmentHitPath(points, line, segmentId, active) {
@@ -744,7 +802,7 @@ function segmentHitPath(points, line, segmentId, active) {
 
   const start = g.mapPoint(first, "right");
   const end = g.mapPoint(second, "right");
-  const d = `M${start.x} ${start.y} ${segmentPath(start, end, styleForSegment(first.id, second.id), line)}`;
+  const d = `M${start.x} ${start.y} ${segmentPath(start, end, styleForLineSegment(line, first.id, second.id), line)}`;
   const activePath = active
     ? `<path class="svg-segment-active" d="${d}"/>`
     : "";
@@ -773,7 +831,7 @@ function renderCurveControls(points, line) {
     const nextPoint = points[index + 1];
     const segmentId = segmentKey(point.id, nextPoint.id);
 
-    if (styleForSegment(point.id, nextPoint.id) !== "curve") {
+    if (styleForLineSegment(line, point.id, nextPoint.id) !== "curve") {
       return "";
     }
 
@@ -888,41 +946,66 @@ function formatControlValue(value, mode = "dimension") {
 
 function makeRangeControl(definition) {
   const fragment = rangeTemplate.content.cloneNode(true);
+  const wrapper = fragment.querySelector(".range-control");
   const labelNode = fragment.querySelector(".control-label");
   const input = fragment.querySelector("input");
   const output = fragment.querySelector("output");
+  const disabled = Boolean(definition.disabled);
   let activePointerId = null;
+  let pendingControlRefresh = false;
 
   labelNode.textContent = definition.label;
   input.min = definition.min;
   input.max = definition.max;
   input.step = definition.step;
   input.value = definition.get();
+  input.disabled = disabled;
   output.value = formatControlValue(definition.get(), definition.mode);
+  wrapper.classList.toggle("is-disabled", disabled);
+  wrapper.setAttribute("aria-disabled", String(disabled));
 
-  const updateValue = (value) => {
+  const updateValue = (value, refreshControls = false) => {
+    if (disabled) {
+      return;
+    }
+
     definition.set(snapToStep(value, Number(definition.step)));
     normalizeState();
     input.value = definition.get();
     output.value = formatControlValue(definition.get(), definition.mode);
-    render();
+    render({ controls: refreshControls });
   };
 
   input.addEventListener("input", () => {
     updateValue(Number(input.value));
   });
 
+  input.addEventListener("change", () => {
+    updateValue(Number(input.value), true);
+  });
+
+  const valueFromPointer = (event) => {
+    const rect = input.getBoundingClientRect();
+    const ratio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+    return Number(definition.min) + ratio * (Number(definition.max) - Number(definition.min));
+  };
+
   input.addEventListener("pointerdown", (event) => {
+    if (disabled) {
+      return;
+    }
+
     event.preventDefault();
     activePointerId = event.pointerId;
+    pendingControlRefresh = true;
+
     try {
       input.setPointerCapture(event.pointerId);
     } catch {
       // Some embedded mobile browsers do not support range pointer capture.
     }
-    const rect = input.getBoundingClientRect();
-    const ratio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
-    updateValue(Number(definition.min) + ratio * (Number(definition.max) - Number(definition.min)));
+
+    updateValue(valueFromPointer(event));
   });
 
   input.addEventListener("pointermove", (event) => {
@@ -931,17 +1014,25 @@ function makeRangeControl(definition) {
     }
 
     event.preventDefault();
-    const rect = input.getBoundingClientRect();
-    const ratio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
-    updateValue(Number(definition.min) + ratio * (Number(definition.max) - Number(definition.min)));
+    pendingControlRefresh = true;
+    updateValue(valueFromPointer(event));
   });
 
+  const finishPointerDrag = (event) => {
+    if (activePointerId !== event.pointerId && event.type !== "lostpointercapture") {
+      return;
+    }
+
+    activePointerId = null;
+
+    if (pendingControlRefresh) {
+      pendingControlRefresh = false;
+      render();
+    }
+  };
+
   ["pointerup", "pointercancel", "lostpointercapture"].forEach((type) => {
-    input.addEventListener(type, (event) => {
-      if (activePointerId === event.pointerId || type === "lostpointercapture") {
-        activePointerId = null;
-      }
-    });
+    input.addEventListener(type, finishPointerDrag);
   });
 
   controlsRoot.appendChild(fragment);
@@ -949,12 +1040,14 @@ function makeRangeControl(definition) {
 
 function selectedPointControls() {
   const point = selectedPoint();
+  const innerUniformLocked = state.editingLine === "inner" && state.uniformWall;
   const controls = [
     {
       label: "Diameter",
       min: 0.5,
       max: 8,
       step: 0.05,
+      disabled: innerUniformLocked,
       get: () => point.radius * 2,
       set: (value) => {
         point.radius = value / 2;
@@ -968,6 +1061,7 @@ function selectedPointControls() {
       min: 0,
       max: 10,
       step: 0.05,
+      disabled: innerUniformLocked,
       get: () => point.height,
       set: (value) => {
         point.height = value;
@@ -992,7 +1086,7 @@ function selectedPointControls() {
 }
 
 function renderSegmentControls() {
-  const style = styleForSegment(...state.selectedSegmentId.split("-"));
+  const style = styleForLineSegment(state.editingLine, ...state.selectedSegmentId.split("-"));
   const [first, second] = selectedSegmentPoints();
   const wrapper = document.createElement("div");
   wrapper.className = "line-style-control";
@@ -1091,10 +1185,12 @@ function renderChrome() {
   deletePointButton.disabled = !canDelete;
 }
 
-function render() {
+function render({ controls = true } = {}) {
   renderChrome();
   renderCanvas();
-  renderControls();
+  if (controls) {
+    renderControls();
+  }
 }
 
 function selectPoint(line, pointId) {
@@ -1234,8 +1330,8 @@ function deleteSelectedPoint() {
 
 function updatePointFromDrag(line, pointId, svgPoint) {
   if (line === "inner" && state.uniformWall) {
-    ensureCustomInner();
-    state.uniformWall = false;
+    selectPoint(line, pointId);
+    return;
   }
 
   const points = line === "outer" ? state.outerPoints : state.innerPoints;
@@ -1260,8 +1356,8 @@ function updateCurveFromDrag(line, segmentId, svgPoint) {
   const linkedUniformCurve = hasUniformCurveLink(line, segmentId);
 
   if (line === "inner" && state.uniformWall && !linkedUniformCurve) {
-    ensureCustomInner();
-    state.uniformWall = false;
+    selectSegment(segmentId, line);
+    return;
   }
 
   const [first, second] = pointsForSegment(line, segmentId);
@@ -1450,9 +1546,15 @@ svg.addEventListener("pointerdown", (event) => {
   if (pointId && line) {
     event.preventDefault();
     event.stopPropagation();
+    selectPoint(line, pointId);
+
+    if (line === "inner" && state.uniformWall) {
+      render();
+      return;
+    }
+
     captureCanvasPointer(event);
     dragHandle = { type: "point", line, pointId, pointerId: event.pointerId, moved: false };
-    selectPoint(line, pointId);
     return;
   }
 
@@ -1561,10 +1663,11 @@ innerLineButton.addEventListener("click", () => {
 });
 
 uniformWallToggle.addEventListener("change", () => {
-  state.uniformWall = uniformWallToggle.checked;
-  if (!state.uniformWall) {
-    ensureCustomInner();
+  const nextUniformWall = uniformWallToggle.checked;
+  if (!nextUniformWall && state.uniformWall) {
+    copyCurrentInnerProfileToCustom();
   }
+  state.uniformWall = nextUniformWall;
   render();
 });
 
