@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>ClayForm Designer</title>
-    <link rel="stylesheet" href="styles.css?v=20260623-persistence-1">
+    <link rel="stylesheet" href="styles.css?v=20260623-ar-phase-1">
   </head>
   <body>
     <main class="app-shell" aria-label="ClayForm pottery profile designer">
@@ -15,6 +15,9 @@
         </div>
         <div class="top-actions" aria-label="Document actions">
           <button class="icon-button dark" type="button" aria-label="Save">S</button>
+          <a id="arQuickLookLink" class="icon-button dark ar-button" rel="ar" href="#" download="clayform-pot.usdz" aria-label="View actual size in augmented reality">
+            <span>AR</span>
+          </a>
         </div>
       </header>
 
@@ -117,6 +120,6 @@
       </label>
     </template>
 
-    <script src="app.js?v=20260623-persistence-1" defer></script>
+    <script src="app.js?v=20260623-ar-phase-1" defer></script>
   </body>
 </html>

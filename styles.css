@@ -111,6 +111,7 @@ button {
   font-size: 26px;
   font-weight: 700;
   line-height: 1;
+  text-decoration: none;
 }
 
 .icon-button.dark {
@@ -118,6 +119,11 @@ button {
   background: #2f2a24;
   border-color: #2f2a24;
   font-size: 20px;
+}
+
+.ar-button {
+  font-size: 14px;
+  letter-spacing: 0;
 }
 
 .canvas-card,

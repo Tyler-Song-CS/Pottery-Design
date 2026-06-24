@@ -23,6 +23,7 @@ const compactSelectedButton = document.querySelector("#compactSelectedButton");
 const compactSelectedLabel = document.querySelector("#compactSelectedLabel");
 const compactLineButtons = document.querySelectorAll("[data-compact-line]");
 const compactKindButtons = document.querySelectorAll("[data-compact-kind]");
+const arQuickLookLink = document.querySelector("#arQuickLookLink");
 
 const baseViewBox = {
   x: 0,
@@ -108,6 +109,7 @@ let suppressCanvasClick = false;
 let suppressSheetClick = false;
 let lastInspectorContext = "";
 let persistenceTimer = null;
+let arModelUrl = null;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -233,6 +235,305 @@ function restorePersistedDesign() {
     normalizeState();
   } catch {
     // Ignore corrupted saved data and continue with the built-in starter form.
+  }
+}
+
+function arScale(value) {
+  return activeSize(value) * 0.0254;
+}
+
+function sampleProfileForAr(line, points) {
+  const samples = [];
+
+  points.slice(0, -1).forEach((point, index) => {
+    const nextPoint = points[index + 1];
+    const segmentId = segmentKey(point.id, nextPoint.id);
+    const style = styleForLineSegment(line, point.id, nextPoint.id);
+
+    if (index === 0) {
+      samples.push({ radius: point.radius, height: point.height });
+    }
+
+    if (style !== "curve") {
+      samples.push({ radius: nextPoint.radius, height: nextPoint.height });
+      return;
+    }
+
+    const control = ensureCurveControlForLine(line, segmentId, point, nextPoint);
+    for (let step = 1; step <= 10; step += 1) {
+      const t = step / 10;
+      samples.push(quadraticPoint(point, control, nextPoint, t));
+    }
+  });
+
+  return samples;
+}
+
+function compactArProfile(points) {
+  return points.filter((point, index) => {
+    if (index === 0) {
+      return true;
+    }
+
+    const previous = points[index - 1];
+    return Math.hypot(point.radius - previous.radius, point.height - previous.height) > 0.002;
+  });
+}
+
+function arProfileLoop() {
+  normalizeState();
+  const outerProfile = compactArProfile(sampleProfileForAr("outer", state.outerPoints));
+  const innerProfile = compactArProfile(sampleProfileForAr("inner", innerProfilePoints()));
+  const outerBase = outerProfile.at(-1);
+  const innerFloor = innerProfile.at(-1);
+
+  if (!outerBase || !innerFloor || outerProfile.length < 2 || innerProfile.length < 2) {
+    return [];
+  }
+
+  return compactArProfile([
+    ...outerProfile,
+    { radius: 0, height: outerBase.height },
+    { radius: 0, height: innerFloor.height },
+    ...[...innerProfile].reverse()
+  ]);
+}
+
+function buildArMesh() {
+  const radialSegments = 64;
+  const profile = arProfileLoop();
+  const points = [];
+  const faceVertexCounts = [];
+  const faceVertexIndices = [];
+
+  profile.forEach((profilePoint) => {
+    const radius = arScale(profilePoint.radius);
+    const height = arScale(profilePoint.height);
+
+    for (let segment = 0; segment < radialSegments; segment += 1) {
+      const angle = (segment / radialSegments) * Math.PI * 2;
+      points.push([
+        radius * Math.cos(angle),
+        height,
+        radius * Math.sin(angle)
+      ]);
+    }
+  });
+
+  for (let ring = 0; ring < profile.length; ring += 1) {
+    const nextRing = (ring + 1) % profile.length;
+
+    for (let segment = 0; segment < radialSegments; segment += 1) {
+      const nextSegment = (segment + 1) % radialSegments;
+      const a = ring * radialSegments + segment;
+      const b = ring * radialSegments + nextSegment;
+      const c = nextRing * radialSegments + nextSegment;
+      const d = nextRing * radialSegments + segment;
+      faceVertexCounts.push(4);
+      faceVertexIndices.push(a, b, c, d);
+    }
+  }
+
+  const maxRadius = Math.max(...profile.map((point) => arScale(point.radius)));
+  const maxHeight = Math.max(...profile.map((point) => arScale(point.height)));
+
+  return { points, faceVertexCounts, faceVertexIndices, maxRadius, maxHeight };
+}
+
+function usdNumber(value) {
+  return Number(value).toFixed(6).replace(/\.?0+$/, "");
+}
+
+function usdArray(values) {
+  return values.join(", ");
+}
+
+function usdPoint(point) {
+  return `(${usdNumber(point[0])}, ${usdNumber(point[1])}, ${usdNumber(point[2])})`;
+}
+
+function buildUsdModel() {
+  const mesh = buildArMesh();
+
+  return `#usda 1.0
+(
+    defaultPrim = "ClayFormPot"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "ClayFormPot"
+{
+    def Mesh "Body"
+    {
+        uniform bool doubleSided = true
+        uniform token subdivisionScheme = "none"
+        float3[] extent = [(${usdNumber(-mesh.maxRadius)}, 0, ${usdNumber(-mesh.maxRadius)}), (${usdNumber(mesh.maxRadius)}, ${usdNumber(mesh.maxHeight)}, ${usdNumber(mesh.maxRadius)})]
+        point3f[] points = [${mesh.points.map(usdPoint).join(", ")}]
+        int[] faceVertexCounts = [${usdArray(mesh.faceVertexCounts)}]
+        int[] faceVertexIndices = [${usdArray(mesh.faceVertexIndices)}]
+        rel material:binding = </ClayFormPot/ClayMaterial>
+    }
+
+    def Material "ClayMaterial"
+    {
+        token outputs:surface.connect = </ClayFormPot/ClayMaterial/PreviewSurface.outputs:surface>
+
+        def Shader "PreviewSurface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.64, 0.51, 0.35)
+            float inputs:roughness = 0.88
+            token outputs:surface
+        }
+    }
+}
+`;
+}
+
+function crc32(bytes) {
+  let crc = -1;
+
+  for (let index = 0; index < bytes.length; index += 1) {
+    crc ^= bytes[index];
+
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+  }
+
+  return (crc ^ -1) >>> 0;
+}
+
+function dosDateTime(date) {
+  const time = (date.getHours() << 11)
+    | (date.getMinutes() << 5)
+    | Math.floor(date.getSeconds() / 2);
+  const dosDate = ((date.getFullYear() - 1980) << 9)
+    | ((date.getMonth() + 1) << 5)
+    | date.getDate();
+
+  return { time, date: dosDate };
+}
+
+function writeBytes(target, offset, source) {
+  target.set(source, offset);
+  return offset + source.length;
+}
+
+function zipLocalExtraLength(offset, fileNameLength) {
+  const unpaddedOffset = offset + 30 + fileNameLength;
+  const padding = (64 - (unpaddedOffset % 64)) % 64;
+  return padding >= 4 ? padding : 0;
+}
+
+function zipPaddingExtra(length) {
+  if (length === 0) {
+    return new Uint8Array();
+  }
+
+  const extra = new Uint8Array(length);
+  const view = new DataView(extra.buffer);
+  view.setUint16(0, 0x1986, true);
+  view.setUint16(2, length - 4, true);
+  return extra;
+}
+
+function createStoredZip(entries) {
+  const encoder = new TextEncoder();
+  const timestamp = dosDateTime(new Date());
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+
+  entries.forEach((entry) => {
+    const nameBytes = encoder.encode(entry.name);
+    const localExtra = zipPaddingExtra(zipLocalExtraLength(offset, nameBytes.length));
+    const localHeader = new Uint8Array(30);
+    const localView = new DataView(localHeader.buffer);
+    const checksum = crc32(entry.data);
+    const localOffset = offset;
+
+    localView.setUint32(0, 0x04034b50, true);
+    localView.setUint16(4, 20, true);
+    localView.setUint16(6, 0, true);
+    localView.setUint16(8, 0, true);
+    localView.setUint16(10, timestamp.time, true);
+    localView.setUint16(12, timestamp.date, true);
+    localView.setUint32(14, checksum, true);
+    localView.setUint32(18, entry.data.length, true);
+    localView.setUint32(22, entry.data.length, true);
+    localView.setUint16(26, nameBytes.length, true);
+    localView.setUint16(28, localExtra.length, true);
+
+    localParts.push(localHeader, nameBytes, localExtra, entry.data);
+    offset += localHeader.length + nameBytes.length + localExtra.length + entry.data.length;
+
+    const centralHeader = new Uint8Array(46);
+    const centralView = new DataView(centralHeader.buffer);
+    centralView.setUint32(0, 0x02014b50, true);
+    centralView.setUint16(4, 20, true);
+    centralView.setUint16(6, 20, true);
+    centralView.setUint16(8, 0, true);
+    centralView.setUint16(10, 0, true);
+    centralView.setUint16(12, timestamp.time, true);
+    centralView.setUint16(14, timestamp.date, true);
+    centralView.setUint32(16, checksum, true);
+    centralView.setUint32(20, entry.data.length, true);
+    centralView.setUint32(24, entry.data.length, true);
+    centralView.setUint16(28, nameBytes.length, true);
+    centralView.setUint16(30, 0, true);
+    centralView.setUint16(32, 0, true);
+    centralView.setUint16(34, 0, true);
+    centralView.setUint16(36, 0, true);
+    centralView.setUint32(38, 0, true);
+    centralView.setUint32(42, localOffset, true);
+    centralParts.push(centralHeader, nameBytes);
+  });
+
+  const centralDirectoryOffset = offset;
+  centralParts.forEach((part) => {
+    offset += part.length;
+  });
+  const centralDirectorySize = offset - centralDirectoryOffset;
+  const endHeader = new Uint8Array(22);
+  const endView = new DataView(endHeader.buffer);
+  endView.setUint32(0, 0x06054b50, true);
+  endView.setUint16(4, 0, true);
+  endView.setUint16(6, 0, true);
+  endView.setUint16(8, entries.length, true);
+  endView.setUint16(10, entries.length, true);
+  endView.setUint32(12, centralDirectorySize, true);
+  endView.setUint32(16, centralDirectoryOffset, true);
+  endView.setUint16(20, 0, true);
+
+  const archive = new Uint8Array(offset + endHeader.length);
+  let writeOffset = 0;
+  [...localParts, ...centralParts, endHeader].forEach((part) => {
+    writeOffset = writeBytes(archive, writeOffset, part);
+  });
+
+  return archive;
+}
+
+function buildUsdzBlob() {
+  const usda = new TextEncoder().encode(buildUsdModel());
+  const archive = createStoredZip([{ name: "ClayFormPot.usda", data: usda }]);
+  return new Blob([archive], { type: "model/vnd.usdz+zip" });
+}
+
+function prepareArQuickLookLink(event) {
+  try {
+    const blob = buildUsdzBlob();
+    if (arModelUrl) {
+      URL.revokeObjectURL(arModelUrl);
+    }
+    arModelUrl = URL.createObjectURL(blob);
+    arQuickLookLink.href = arModelUrl;
+    arQuickLookLink.download = `clayform-pot-${state.basis}-actual-size.usdz`;
+  } catch (error) {
+    event.preventDefault();
+    console.error("Unable to create AR model", error);
   }
 }
 
@@ -2425,6 +2726,8 @@ shrinkageInput.addEventListener("input", () => {
   state.shrinkage = clamp(Number(shrinkageInput.value) || 0, 0, 30);
   render();
 });
+
+arQuickLookLink.addEventListener("click", prepareArQuickLookLink);
 
 window.addEventListener("pagehide", persistDesignNow);
 
