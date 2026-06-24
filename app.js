@@ -1,5 +1,6 @@
 const svg = document.querySelector("#profileCanvas");
 const selectedLabel = document.querySelector("#selectedLabel");
+const selectedMeta = document.querySelector("#selectedMeta");
 const controlsTitle = document.querySelector("#controlsTitle");
 const controlsRoot = document.querySelector("#sectionControls");
 const rangeTemplate = document.querySelector("#rangeControlTemplate");
@@ -8,14 +9,20 @@ const clayEstimateValue = document.querySelector("#clayEstimateValue");
 const shrinkageInput = document.querySelector("#shrinkageInput");
 const finishedBasis = document.querySelector("#finishedBasis");
 const wetBasis = document.querySelector("#wetBasis");
-const resetViewButton = document.querySelector("#fullViewButton");
 const uniformWallToggle = document.querySelector("#uniformWallToggle");
+const uniformWallControl = document.querySelector("#uniformWallControl");
 const outerLineButton = document.querySelector("#outerLineButton");
 const innerLineButton = document.querySelector("#innerLineButton");
 const pointModeButton = document.querySelector("#pointModeButton");
 const segmentModeButton = document.querySelector("#segmentModeButton");
 const addPointButton = document.querySelector("#addPointButton");
 const deletePointButton = document.querySelector("#deletePointButton");
+const bottomInspector = document.querySelector("#bottomInspector");
+const inspectorToggle = document.querySelector("#inspectorToggle");
+const compactSelectedButton = document.querySelector("#compactSelectedButton");
+const compactSelectedLabel = document.querySelector("#compactSelectedLabel");
+const compactLineButtons = document.querySelectorAll("[data-compact-line]");
+const compactKindButtons = document.querySelectorAll("[data-compact-kind]");
 
 const baseViewBox = {
   x: 0,
@@ -33,6 +40,7 @@ const state = {
   selectedKind: "point",
   selectedPointId: "belly",
   selectedSegmentId: "belly-lower",
+  inspectorState: "expanded",
   uniformWall: true,
   shrinkage: 12,
   wallThickness: 0.25,
@@ -63,15 +71,19 @@ const state = {
     "outer:shoulder-belly": { height: 4.72, radius: 2.72 },
     "outer:belly-lower": { height: 2.66, radius: 2.42 },
     "outer:lower-foot": { height: 0.96, radius: 1.18 }
-  }
+  },
+  pointJoints: {}
 };
 
 const outerOnlyPointIds = new Set(["foot", "base"]);
 
 let dragHandle = null;
+let sheetDrag = null;
 let panGesture = null;
 let pinchGesture = null;
 let suppressCanvasClick = false;
+let suppressSheetClick = false;
+let lastInspectorContext = "";
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -123,6 +135,16 @@ function footReferencePoint() {
 
 function sortedPoints(points) {
   return [...points].sort((a, b) => b.height - a.height);
+}
+
+function highestOuterPoint() {
+  return state.outerPoints.reduce((highest, point) => (
+    point.height > highest.height ? point : highest
+  ), state.outerPoints[0]);
+}
+
+function maxOuterHeight() {
+  return highestOuterPoint()?.height || 0;
 }
 
 function segmentKey(firstId, secondId) {
@@ -177,12 +199,16 @@ function styleForLineSegment(line, firstId, secondId) {
 }
 
 function setSegmentStyle(segmentId, style) {
-  const styleSegmentId = segmentStyleKeyForLine(state.editingLine, segmentId);
+  setSegmentStyleForLine(state.editingLine, segmentId, style);
+}
+
+function setSegmentStyleForLine(line, segmentId, style) {
+  const styleSegmentId = segmentStyleKeyForLine(line, segmentId);
   state.segmentStyles[styleSegmentId] = style;
   delete state.segmentStyles[reverseSegmentKey(styleSegmentId)];
 
   if (style === "curve") {
-    ensureCurveControlForLine(state.editingLine, segmentId);
+    ensureCurveControlForLine(line, segmentId);
   }
 }
 
@@ -227,10 +253,118 @@ function selectedSegmentIdForPoint(pointId) {
   return state.selectedSegmentId;
 }
 
-function normalizeOuterPoints() {
-  const minGap = 0.22;
+function pointJoint(pointId) {
+  return state.pointJoints[pointId] || {
+    type: "smooth",
+    angle: "free",
+    orientation: "prev-horizontal"
+  };
+}
 
-  state.outerPoints.forEach((point, index) => {
+function setPointJoint(pointId, updates) {
+  const current = pointJoint(pointId);
+  state.pointJoints[pointId] = {
+    ...current,
+    ...updates
+  };
+}
+
+function adjacentPointsForPoint(line, pointId) {
+  const points = line === "outer" ? state.outerPoints : innerProfilePoints();
+  const index = pointIndex(points, pointId);
+
+  if (index < 0) {
+    return { points, index, point: null, previous: null, next: null };
+  }
+
+  return {
+    points,
+    index,
+    point: points[index],
+    previous: points[index - 1] || null,
+    next: points[index + 1] || null
+  };
+}
+
+function setPointHeight(point, height) {
+  if (!point || point.fixed === "base") {
+    return;
+  }
+
+  point.height = height;
+}
+
+function setPointRadius(point, radius) {
+  if (!point) {
+    return;
+  }
+
+  point.radius = radius;
+}
+
+function constrainRightAngle(line, pointId) {
+  const { point, previous, next } = adjacentPointsForPoint(line, pointId);
+
+  if (!point || !previous || !next) {
+    return;
+  }
+
+  const joint = pointJoint(pointId);
+
+  if (joint.orientation === "next-horizontal") {
+    setPointRadius(previous, point.radius);
+    setPointHeight(next, point.height);
+    return;
+  }
+
+  setPointHeight(previous, point.height);
+  setPointRadius(next, point.radius);
+}
+
+function applyPointJoint(line, pointId) {
+  const joint = state.pointJoints[pointId];
+
+  if (!joint) {
+    return;
+  }
+
+  const { point, previous, next } = adjacentPointsForPoint(line, pointId);
+
+  if (!point || !previous || !next) {
+    return;
+  }
+
+  const previousSegmentId = segmentKey(previous.id, point.id);
+  const nextSegmentId = segmentKey(point.id, next.id);
+
+  if (joint.type === "smooth") {
+    setSegmentStyleForLine(line, previousSegmentId, "curve");
+    setSegmentStyleForLine(line, nextSegmentId, "curve");
+    return;
+  }
+
+  setSegmentStyleForLine(line, previousSegmentId, "straight");
+  setSegmentStyleForLine(line, nextSegmentId, "straight");
+
+  if (joint.angle === "right") {
+    constrainRightAngle(line, pointId);
+  }
+}
+
+function applyPointJointsTouchingPoint(line, pointId) {
+  const { points, index } = adjacentPointsForPoint(line, pointId);
+
+  [index - 1, index, index + 1].forEach((candidateIndex) => {
+    const point = points[candidateIndex];
+
+    if (point) {
+      applyPointJoint(line, point.id);
+    }
+  });
+}
+
+function normalizeOuterPoints() {
+  state.outerPoints.forEach((point) => {
     point.radius = clamp(point.radius, 0.25, 4);
 
     if (point.fixed === "base") {
@@ -238,44 +372,223 @@ function normalizeOuterPoints() {
       return;
     }
 
-    const maxHeight = index === 0 ? 10 : state.outerPoints[index - 1].height - minGap;
-    const minHeight = index === state.outerPoints.length - 1
-      ? 0
-      : state.outerPoints[index + 1].height + minGap;
-
-    point.height = clamp(point.height, minHeight, maxHeight);
+    point.height = clamp(point.height, 0, 10);
   });
+}
 
-  state.outerPoints[0].height = clamp(
-    state.outerPoints[0].height,
-    state.outerPoints[1].height + minGap,
-    10
+function thicknessForPoint(point) {
+  return point?.id === "rim" ? state.rimThickness : state.wallThickness;
+}
+
+function radialInnerPointFromOuter(point) {
+  const thickness = thicknessForPoint(point);
+
+  return {
+    id: point.id,
+    label: `Inner ${point.label}`,
+    height: point.height,
+    radius: Math.max(0.12, point.radius - thickness)
+  };
+}
+
+function inwardNormalForVector(deltaRadius, deltaHeight) {
+  const length = Math.hypot(deltaRadius, deltaHeight);
+
+  if (length < 0.001) {
+    return { radius: -1, height: 0 };
+  }
+
+  let normal = {
+    radius: deltaHeight / length,
+    height: -deltaRadius / length
+  };
+
+  if (normal.radius > 0.001) {
+    normal = {
+      radius: -normal.radius,
+      height: -normal.height
+    };
+  }
+
+  return normal;
+}
+
+function inwardNormalForSegment(first, second) {
+  return inwardNormalForVector(
+    second.radius - first.radius,
+    second.height - first.height
   );
+}
+
+function offsetPoint(point, normal, thickness = thicknessForPoint(point)) {
+  return {
+    height: point.height + normal.height * thickness,
+    radius: Math.max(0.12, point.radius + normal.radius * thickness)
+  };
+}
+
+function curveControlForOuterSegment(first, second) {
+  return ensureSegmentCurveControl("outer", segmentKey(first.id, second.id), first, second);
+}
+
+function tangentVectorForSegmentEndpoint(first, second, endpoint) {
+  if (styleForSegment(first.id, second.id) !== "curve") {
+    return {
+      radius: second.radius - first.radius,
+      height: second.height - first.height
+    };
+  }
+
+  const control = curveControlForOuterSegment(first, second);
+  const tangent = endpoint === "start"
+    ? {
+      radius: control.radius - first.radius,
+      height: control.height - first.height
+    }
+    : {
+      radius: second.radius - control.radius,
+      height: second.height - control.height
+    };
+
+  if (Math.hypot(tangent.radius, tangent.height) < 0.001) {
+    return {
+      radius: second.radius - first.radius,
+      height: second.height - first.height
+    };
+  }
+
+  return tangent;
+}
+
+function offsetTangentLineForSegmentEndpoint(first, second, endpoint) {
+  const sourcePoint = endpoint === "start" ? first : second;
+  const tangent = tangentVectorForSegmentEndpoint(first, second, endpoint);
+  const normal = inwardNormalForVector(tangent.radius, tangent.height);
+  const shiftedPoint = offsetPoint(sourcePoint, normal);
+
+  return {
+    start: shiftedPoint,
+    end: {
+      radius: shiftedPoint.radius + tangent.radius,
+      height: shiftedPoint.height + tangent.height
+    },
+    anchor: shiftedPoint
+  };
+}
+
+function offsetLineForSegment(first, second) {
+  const normal = inwardNormalForSegment(first, second);
+
+  return {
+    start: offsetPoint(first, normal),
+    end: offsetPoint(second, normal)
+  };
+}
+
+function lineIntersection(firstLine, secondLine) {
+  const x1 = firstLine.start.radius;
+  const y1 = firstLine.start.height;
+  const x2 = firstLine.end.radius;
+  const y2 = firstLine.end.height;
+  const x3 = secondLine.start.radius;
+  const y3 = secondLine.start.height;
+  const x4 = secondLine.end.radius;
+  const y4 = secondLine.end.height;
+  const denominator = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+
+  if (Math.abs(denominator) < 0.0001) {
+    return null;
+  }
+
+  return {
+    radius: ((x1 * y2 - y1 * x2) * (x3 - x4) - (x1 - x2) * (x3 * y4 - y3 * x4)) / denominator,
+    height: ((x1 * y2 - y1 * x2) * (y3 - y4) - (y1 - y2) * (x3 * y4 - y3 * x4)) / denominator
+  };
+}
+
+function pointOnOffsetLineAtHeight(line, height) {
+  const heightRange = line.end.height - line.start.height;
+
+  if (Math.abs(heightRange) < 0.001) {
+    return {
+      height,
+      radius: (line.start.radius + line.end.radius) / 2
+    };
+  }
+
+  const ratio = (height - line.start.height) / heightRange;
+
+  return {
+    height,
+    radius: line.start.radius + (line.end.radius - line.start.radius) * ratio
+  };
+}
+
+function uniformOffsetForPoint(point, index, fallbackPoint) {
+  const previous = state.outerPoints[index - 1];
+  const next = state.outerPoints[index + 1];
+  const previousLine = previous
+    ? offsetTangentLineForSegmentEndpoint(previous, point, "end")
+    : null;
+  const nextLine = next
+    ? offsetTangentLineForSegmentEndpoint(point, next, "start")
+    : null;
+
+  if (previousLine && nextLine) {
+    const intersection = lineIntersection(previousLine, nextLine);
+
+    if (intersection) {
+      return intersection;
+    }
+  }
+
+  if (previousLine) {
+    return previousLine.anchor;
+  }
+
+  if (nextLine) {
+    return nextLine.anchor;
+  }
+
+  return fallbackPoint;
 }
 
 function derivedInnerPoints() {
   normalizeOuterPoints();
-  const floorHeight = clamp(state.floorThickness, 0.15, state.outerPoints[0].height - 0.5);
+  const floorHeight = clamp(state.floorThickness, 0.15, Math.max(0.15, maxOuterHeight() - 0.5));
   const points = [];
 
-  state.outerPoints.forEach((point) => {
+  state.outerPoints.forEach((point, index) => {
     if (isOuterOnlyPoint(point) || point.height <= floorHeight + 0.03) {
       return;
     }
 
-    const thickness = point.id === "rim" ? state.rimThickness : state.wallThickness;
+    const radialPoint = radialInnerPointFromOuter(point);
+    const offset = uniformOffsetForPoint(point, index, radialPoint);
+
     points.push({
-      id: point.id,
-      label: `Inner ${point.label}`,
-      height: point.height,
-      radius: Math.max(0.12, point.radius - thickness)
+      ...radialPoint,
+      height: clamp(offset.height, 0.15, maxOuterHeight()),
+      radius: Math.max(0.12, offset.radius)
     });
   });
 
   const footPoint = footReferencePoint();
-  const floorRadius = footPoint
-    ? Math.max(0.12, footPoint.radius - state.wallThickness)
-    : Math.max(0.12, state.outerPoints[0].radius - state.wallThickness);
+  const footIndex = footPoint ? pointIndex(state.outerPoints, footPoint.id) : -1;
+  const previousFootPoint = footIndex > 0 ? state.outerPoints[footIndex - 1] : null;
+  const footOffsetLine = previousFootPoint
+    && footPoint
+      ? offsetTangentLineForSegmentEndpoint(previousFootPoint, footPoint, "end")
+      : null;
+  const floorOffset = footOffsetLine
+    ? pointOnOffsetLineAtHeight(footOffsetLine, floorHeight)
+    : null;
+  const floorRadius = floorOffset
+    ? Math.max(0.12, floorOffset.radius)
+    : footPoint
+      ? Math.max(0.12, footPoint.radius - state.wallThickness)
+      : Math.max(0.12, state.outerPoints[0].radius - state.wallThickness);
+
   points.push({
     id: "floor",
     label: "Interior floor",
@@ -332,7 +645,6 @@ function normalizeInnerPoints() {
   }
 
   ensureCustomInner();
-  const minGap = 0.18;
   const outerById = new Map(state.outerPoints.map((point) => [point.id, point]));
   state.innerPoints = state.innerPoints.filter((point) => {
     if (point.fixed === "floor" || point.id === "floor") {
@@ -343,21 +655,18 @@ function normalizeInnerPoints() {
     return !isOuterOnlyPoint(point) && !isOuterOnlyPoint(outer);
   });
 
-  state.innerPoints.forEach((point, index) => {
+  state.innerPoints.forEach((point) => {
     const outer = outerById.get(point.id);
     const maxRadius = outer ? outer.radius - 0.08 : footReferencePoint().radius - 0.08;
+    const maxHeight = Math.max(0.15, maxOuterHeight());
     point.radius = clamp(point.radius, 0.12, Math.max(0.14, maxRadius));
 
     if (point.fixed === "floor" || point.id === "floor") {
-      point.height = clamp(point.height, 0.15, state.outerPoints[0].height - 0.5);
+      point.height = clamp(point.height, 0.15, Math.max(0.15, maxHeight - 0.5));
       return;
     }
 
-    const maxHeight = index === 0 ? state.outerPoints[0].height : state.innerPoints[index - 1].height - minGap;
-    const minHeight = index === state.innerPoints.length - 1
-      ? 0.15
-      : state.innerPoints[index + 1].height + minGap;
-    point.height = clamp(point.height, minHeight, maxHeight);
+    point.height = clamp(point.height, 0.15, maxHeight);
   });
 }
 
@@ -380,6 +689,9 @@ function normalizeSegmentCurves() {
 }
 
 function normalizeState() {
+  if (!isInspectorState(state.inspectorState)) {
+    state.inspectorState = "expanded";
+  }
   state.shrinkage = clamp(Number(state.shrinkage) || 0, 0, 30);
   state.wallThickness = clamp(state.wallThickness, 0.08, 0.7);
   state.rimThickness = clamp(state.rimThickness, 0.08, 0.7);
@@ -642,29 +954,87 @@ function wallOffsetAtSegmentHeight(segmentId, height) {
   return firstOffset + (secondOffset - firstOffset) * ratio;
 }
 
-function innerControlFromOuter(segmentId, outerControl) {
-  const [innerFirst, innerSecond] = pointsForSegment("inner", segmentId);
-  const height = innerFirst && innerSecond
-    ? clamp(
-      outerControl.height,
-      Math.min(innerFirst.height, innerSecond.height),
-      Math.max(innerFirst.height, innerSecond.height)
-    )
-    : outerControl.height;
-  const offset = wallOffsetAtSegmentHeight(segmentId, height);
+function quadraticPoint(first, control, second, t) {
+  const inverse = 1 - t;
 
   return {
-    height,
-    radius: Math.max(0.12, outerControl.radius - offset)
+    radius: inverse * inverse * first.radius
+      + 2 * inverse * t * control.radius
+      + t * t * second.radius,
+    height: inverse * inverse * first.height
+      + 2 * inverse * t * control.height
+      + t * t * second.height
+  };
+}
+
+function quadraticTangent(first, control, second, t) {
+  const inverse = 1 - t;
+
+  return {
+    radius: 2 * (inverse * (control.radius - first.radius) + t * (second.radius - control.radius)),
+    height: 2 * (inverse * (control.height - first.height) + t * (second.height - control.height))
+  };
+}
+
+function controlPointFromQuadraticMidpoint(first, midpoint, second) {
+  return {
+    radius: 2 * midpoint.radius - (first.radius + second.radius) / 2,
+    height: 2 * midpoint.height - (first.height + second.height) / 2
+  };
+}
+
+function innerControlFromOuter(segmentId, outerControl) {
+  const [outerFirst, outerSecond] = pointsForSegment("outer", outerSegmentIdForInner(segmentId));
+  const [innerFirst, innerSecond] = pointsForSegment("inner", segmentId);
+
+  if (!outerFirst || !outerSecond || !innerFirst || !innerSecond) {
+    const offset = wallOffsetAtSegmentHeight(segmentId, outerControl.height);
+
+    return {
+      height: outerControl.height,
+      radius: Math.max(0.12, outerControl.radius - offset)
+    };
+  }
+
+  const midpoint = quadraticPoint(outerFirst, outerControl, outerSecond, 0.5);
+  const tangent = quadraticTangent(outerFirst, outerControl, outerSecond, 0.5);
+  const normal = inwardNormalForVector(tangent.radius, tangent.height);
+  const innerMidpoint = offsetPoint(midpoint, normal, state.wallThickness);
+  const control = controlPointFromQuadraticMidpoint(innerFirst, innerMidpoint, innerSecond);
+
+  return {
+    height: clamp(
+      control.height,
+      Math.min(innerFirst.height, innerSecond.height),
+      Math.max(innerFirst.height, innerSecond.height)
+    ),
+    radius: Math.max(0.12, control.radius)
   };
 }
 
 function outerControlFromInner(segmentId, innerControl) {
-  const offset = wallOffsetAtSegmentHeight(segmentId, innerControl.height);
+  const [outerFirst, outerSecond] = pointsForSegment("outer", outerSegmentIdForInner(segmentId));
+
+  if (!outerFirst || !outerSecond) {
+    const offset = wallOffsetAtSegmentHeight(segmentId, innerControl.height);
+
+    return {
+      height: innerControl.height,
+      radius: clamp(innerControl.radius + offset, 0.12, 4)
+    };
+  }
+
+  const outerControl = ensureSegmentCurveControl("outer", outerSegmentIdForInner(segmentId), outerFirst, outerSecond);
+  const tangent = quadraticTangent(outerFirst, outerControl, outerSecond, 0.5);
+  const normal = inwardNormalForVector(tangent.radius, tangent.height);
 
   return {
-    height: innerControl.height,
-    radius: clamp(innerControl.radius + offset, 0.12, 4)
+    height: clamp(
+      innerControl.height - normal.height * state.wallThickness,
+      Math.min(outerFirst.height, outerSecond.height),
+      Math.max(outerFirst.height, outerSecond.height)
+    ),
+    radius: clamp(innerControl.radius - normal.radius * state.wallThickness, 0.12, 4)
   };
 }
 
@@ -865,19 +1235,19 @@ function renderDimensionLabels() {
   const g = profileGeometry();
   const outerRight = mappedOuter("right");
   const outerLeft = mappedOuter("left");
-  const rim = state.outerPoints[0];
+  const highest = highestOuterPoint();
   const selected = selectedPoint();
   const selectedMapped = g.mapPoint(selected, "right");
   const leftX = g.xForRadius(selected.radius, "left");
   const rightX = g.xForRadius(selected.radius, "right");
   const labelY = selectedMapped.y - 22;
-  const heightY = g.yForHeight(rim.height);
+  const heightY = g.yForHeight(highest.height);
 
   return `
     <path class="svg-dimension" d="M544 ${heightY} V${g.bottomY}"/>
     <path class="svg-dimension" d="M532 ${heightY} H556"/>
     <path class="svg-dimension" d="M532 ${g.bottomY} H556"/>
-    ${svgTextEnd(534, g.bottomY - 88, outputText(rim.height), "svg-label-small")}
+    ${svgTextEnd(534, g.bottomY - 88, outputText(highest.height), "svg-label-small")}
 
     <path class="svg-dimension" d="M${leftX} ${selectedMapped.y} H${rightX}"/>
     <path class="svg-dimension" d="M${leftX} ${selectedMapped.y - 12} V${selectedMapped.y + 12}"/>
@@ -925,7 +1295,7 @@ function selectedName() {
   if (state.selectedKind === "segment") {
     const [first, second] = selectedSegmentPoints();
     if (!first || !second) {
-      return "Segment";
+      return "Line";
     }
     return `${first.label} to ${second.label}`;
   }
@@ -936,6 +1306,10 @@ function selectedName() {
     : `${point.label} point`;
 }
 
+function selectedMetaText() {
+  return `${titleCase(state.editingLine)} ${state.selectedKind === "segment" ? "line" : "point"}`;
+}
+
 function formatControlValue(value, mode = "dimension") {
   if (mode === "percent") {
     return `${value.toFixed(0)}%`;
@@ -944,7 +1318,7 @@ function formatControlValue(value, mode = "dimension") {
   return outputText(value);
 }
 
-function makeRangeControl(definition) {
+function makeRangeControl(definition, target = controlsRoot) {
   const fragment = rangeTemplate.content.cloneNode(true);
   const wrapper = fragment.querySelector(".range-control");
   const labelNode = fragment.querySelector(".control-label");
@@ -1035,7 +1409,27 @@ function makeRangeControl(definition) {
     input.addEventListener(type, finishPointerDrag);
   });
 
-  controlsRoot.appendChild(fragment);
+  target.appendChild(fragment);
+}
+
+function createControlGroup(title) {
+  const group = document.createElement("section");
+  const heading = document.createElement("h3");
+  const body = document.createElement("div");
+
+  group.className = "control-group";
+  heading.textContent = title;
+  body.className = "control-group-body";
+  group.append(heading, body);
+  controlsRoot.appendChild(group);
+
+  return body;
+}
+
+function renderWallGroup(extraControls = []) {
+  const group = createControlGroup("Wall");
+  group.appendChild(uniformWallControl);
+  extraControls.forEach((control) => makeRangeControl(control, group));
 }
 
 function selectedPointControls() {
@@ -1085,14 +1479,14 @@ function selectedPointControls() {
   return controls;
 }
 
-function renderSegmentControls() {
+function renderSegmentControls(target = controlsRoot) {
   const style = styleForLineSegment(state.editingLine, ...state.selectedSegmentId.split("-"));
   const [first, second] = selectedSegmentPoints();
   const wrapper = document.createElement("div");
   wrapper.className = "line-style-control";
   wrapper.innerHTML = `
-    <span>Line style</span>
-    <div class="style-toggle" role="group" aria-label="Segment line style">
+    <span>Line shape</span>
+    <div class="style-toggle" role="group" aria-label="Line shape">
       <button type="button" data-style="curve">Curve</button>
       <button type="button" data-style="straight">Straight</button>
     </div>
@@ -1106,7 +1500,7 @@ function renderSegmentControls() {
     });
   });
 
-  controlsRoot.appendChild(wrapper);
+  target.appendChild(wrapper);
 
   if (style === "curve" && first && second) {
     const line = state.editingLine;
@@ -1115,7 +1509,7 @@ function renderSegmentControls() {
     const maxHeight = Math.max(first.height, second.height);
 
     makeRangeControl({
-      label: "Control diameter",
+      label: "Curve width",
       min: 0.5,
       max: 8,
       step: 0.05,
@@ -1127,10 +1521,10 @@ function renderSegmentControls() {
           radius: value / 2
         });
       }
-    });
+    }, target);
 
     makeRangeControl({
-      label: "Control height",
+      label: "Curve height",
       min: minHeight,
       max: maxHeight,
       step: 0.05,
@@ -1142,22 +1536,42 @@ function renderSegmentControls() {
           height: value
         });
       }
-    });
+    }, target);
   }
 }
 
 function renderControls() {
   selectedLabel.textContent = selectedName();
+  selectedMeta.textContent = selectedMetaText();
+  const inspectorContext = state.selectedKind === "segment"
+    ? `${state.editingLine}:segment:${state.selectedSegmentId}`
+    : `${state.editingLine}:point:${state.selectedPointId}`;
+  const selectionChanged = inspectorContext !== lastInspectorContext;
   controlsRoot.replaceChildren();
 
   if (state.selectedKind === "segment") {
-    controlsTitle.textContent = "Segment controls";
-    renderSegmentControls();
+    controlsTitle.textContent = "Controls";
+    renderSegmentControls(createControlGroup("Shape"));
+    renderWallGroup();
+    if (selectionChanged) {
+      bottomInspector.scrollTop = 0;
+      lastInspectorContext = inspectorContext;
+    }
     return;
   }
 
-  controlsTitle.textContent = `${titleCase(state.editingLine)} point controls`;
-  selectedPointControls().forEach(makeRangeControl);
+  controlsTitle.textContent = "Controls";
+  const pointControls = selectedPointControls();
+  const wallControls = pointControls.filter((control) => control.label === "Wall thickness");
+  const sizeControls = pointControls.filter((control) => control.label !== "Wall thickness");
+  const sizeGroup = createControlGroup("Size");
+  sizeControls.forEach((control) => makeRangeControl(control, sizeGroup));
+  renderWallGroup(wallControls);
+
+  if (selectionChanged) {
+    bottomInspector.scrollTop = 0;
+    lastInspectorContext = inspectorContext;
+  }
 }
 
 function renderChrome() {
@@ -1175,6 +1589,27 @@ function renderChrome() {
   innerLineButton.classList.toggle("active", state.editingLine === "inner");
   pointModeButton.classList.toggle("active", state.selectedKind === "point");
   segmentModeButton.classList.toggle("active", state.selectedKind === "segment");
+  const inspectorIsExpanded = state.inspectorState === "expanded";
+  const inspectorIsCompact = state.inspectorState === "compact";
+  const inspectorIsMinimized = state.inspectorState === "minimized";
+  bottomInspector.classList.toggle("is-collapsed", inspectorIsCompact);
+  bottomInspector.classList.toggle("is-minimized", inspectorIsMinimized);
+  inspectorToggle.setAttribute("aria-expanded", String(inspectorIsExpanded));
+  inspectorToggle.setAttribute(
+    "aria-label",
+    inspectorIsExpanded
+      ? "Show compact controls"
+      : inspectorIsCompact
+        ? "Fully minimize controls"
+        : "Expand controls"
+  );
+  compactSelectedLabel.textContent = selectedName();
+  compactLineButtons.forEach((button) => {
+    button.classList.toggle("active", button.dataset.compactLine === state.editingLine);
+  });
+  compactKindButtons.forEach((button) => {
+    button.classList.toggle("active", button.dataset.compactKind === state.selectedKind);
+  });
   uniformWallToggle.checked = state.uniformWall;
   shrinkageInput.value = state.shrinkage;
 
@@ -1206,6 +1641,31 @@ function selectSegment(segmentId, line = state.editingLine) {
   state.selectedSegmentId = segmentId;
   const [firstId] = segmentId.split("-");
   state.selectedPointId = firstId;
+}
+
+function selectPointMode() {
+  state.selectedKind = "point";
+}
+
+function selectSegmentMode() {
+  state.selectedKind = "segment";
+  state.selectedSegmentId = selectedSegmentIdForPoint(state.selectedPointId);
+}
+
+function setEditingLine(line) {
+  state.editingLine = line;
+
+  if (line === "outer") {
+    if (!state.outerPoints.some((point) => point.id === state.selectedPointId)) {
+      state.selectedPointId = state.outerPoints[0].id;
+    }
+    return;
+  }
+
+  const points = innerProfilePoints();
+  if (!points.some((point) => point.id === state.selectedPointId)) {
+    state.selectedPointId = points[0].id;
+  }
 }
 
 function insertPointInSelectedSegment() {
@@ -1624,14 +2084,161 @@ svg.addEventListener("click", () => {
   }
 });
 
+function isInspectorState(value) {
+  return value === "expanded" || value === "compact" || value === "minimized";
+}
+
+function nextInspectorState() {
+  if (state.inspectorState === "expanded") {
+    return "compact";
+  }
+  if (state.inspectorState === "compact") {
+    return "minimized";
+  }
+  return "expanded";
+}
+
+function setInspectorState(nextState) {
+  if (!isInspectorState(nextState)) {
+    return;
+  }
+  state.inspectorState = nextState;
+  render();
+  bottomInspector.scrollTop = 0;
+}
+
+function suppressNextSheetClick() {
+  suppressSheetClick = true;
+  window.setTimeout(() => {
+    suppressSheetClick = false;
+  }, 450);
+}
+
+function sheetStateFromSwipe(startState, deltaY, elapsedMs) {
+  const distance = Math.abs(deltaY);
+  const isQuickSwipe = elapsedMs < 260 && distance > 16;
+  if (distance < 30 && !isQuickSwipe) {
+    return null;
+  }
+
+  if (deltaY < 0) {
+    return "expanded";
+  }
+
+  return startState === "expanded" ? "compact" : "minimized";
+}
+
+function sheetStateFromTap(target) {
+  return target === compactSelectedButton ? "expanded" : nextInspectorState();
+}
+
+function beginSheetDrag(event) {
+  if (event.pointerType === "mouse" && event.button !== 0) {
+    return;
+  }
+
+  sheetDrag = {
+    pointerId: event.pointerId,
+    startY: event.clientY,
+    lastY: event.clientY,
+    startedAt: performance.now(),
+    startState: state.inspectorState,
+    target: event.currentTarget,
+    moved: false
+  };
+  bottomInspector.classList.add("is-dragging");
+  event.currentTarget.setPointerCapture?.(event.pointerId);
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function updateSheetDrag(event) {
+  if (!sheetDrag || sheetDrag.pointerId !== event.pointerId) {
+    return;
+  }
+
+  sheetDrag.lastY = event.clientY;
+  if (Math.abs(sheetDrag.lastY - sheetDrag.startY) > 6) {
+    sheetDrag.moved = true;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function finishSheetDrag(event) {
+  if (!sheetDrag || sheetDrag.pointerId !== event.pointerId) {
+    return;
+  }
+
+  sheetDrag.lastY = event.clientY;
+  const deltaY = sheetDrag.lastY - sheetDrag.startY;
+  const elapsedMs = performance.now() - sheetDrag.startedAt;
+  const startState = sheetDrag.startState;
+  const target = sheetDrag.target;
+  const nextState = sheetDrag.moved
+    ? sheetStateFromSwipe(startState, deltaY, elapsedMs)
+    : sheetStateFromTap(target);
+
+  target.releasePointerCapture?.(event.pointerId);
+  sheetDrag = null;
+  suppressNextSheetClick();
+  bottomInspector.classList.remove("is-dragging");
+  event.preventDefault();
+  event.stopPropagation();
+
+  if (nextState) {
+    setInspectorState(nextState);
+  }
+}
+
+function cancelSheetDrag(event) {
+  if (!sheetDrag || sheetDrag.pointerId !== event.pointerId) {
+    return;
+  }
+
+  const deltaY = sheetDrag.lastY - sheetDrag.startY;
+  const elapsedMs = performance.now() - sheetDrag.startedAt;
+  const nextState = sheetDrag.moved
+    ? sheetStateFromSwipe(sheetDrag.startState, deltaY, elapsedMs)
+    : null;
+
+  sheetDrag.target.releasePointerCapture?.(event.pointerId);
+  sheetDrag = null;
+  bottomInspector.classList.remove("is-dragging");
+
+  if (nextState) {
+    setInspectorState(nextState);
+  }
+}
+
+function handleSheetButtonClick(event, nextStateFactory) {
+  if (suppressSheetClick) {
+    suppressSheetClick = false;
+    return;
+  }
+
+  setInspectorState(nextStateFactory(event.currentTarget));
+}
+
+function bindSheetDragTarget(element, nextStateFactory) {
+  element.addEventListener("pointerdown", beginSheetDrag);
+  element.addEventListener("pointermove", updateSheetDrag);
+  element.addEventListener("pointerup", finishSheetDrag);
+  element.addEventListener("pointercancel", cancelSheetDrag);
+  element.addEventListener("click", (event) => handleSheetButtonClick(event, nextStateFactory));
+}
+
+window.addEventListener("pointermove", updateSheetDrag);
+window.addEventListener("pointerup", finishSheetDrag);
+window.addEventListener("pointercancel", cancelSheetDrag);
+
 pointModeButton.addEventListener("click", () => {
-  state.selectedKind = "point";
+  selectPointMode();
   render();
 });
 
 segmentModeButton.addEventListener("click", () => {
-  state.selectedKind = "segment";
-  state.selectedSegmentId = selectedSegmentIdForPoint(state.selectedPointId);
+  selectSegmentMode();
   render();
 });
 
@@ -1646,20 +2253,34 @@ addPointButton.addEventListener("click", () => {
 deletePointButton.addEventListener("click", deleteSelectedPoint);
 
 outerLineButton.addEventListener("click", () => {
-  state.editingLine = "outer";
-  if (!state.outerPoints.some((point) => point.id === state.selectedPointId)) {
-    state.selectedPointId = state.outerPoints[0].id;
-  }
+  setEditingLine("outer");
   render();
 });
 
 innerLineButton.addEventListener("click", () => {
-  state.editingLine = "inner";
-  const points = innerProfilePoints();
-  if (!points.some((point) => point.id === state.selectedPointId)) {
-    state.selectedPointId = points[0].id;
-  }
+  setEditingLine("inner");
   render();
+});
+
+bindSheetDragTarget(inspectorToggle, () => nextInspectorState());
+bindSheetDragTarget(compactSelectedButton, () => "expanded");
+
+compactLineButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    setEditingLine(button.dataset.compactLine);
+    render();
+  });
+});
+
+compactKindButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    if (button.dataset.compactKind === "segment") {
+      selectSegmentMode();
+    } else {
+      selectPointMode();
+    }
+    render();
+  });
 });
 
 uniformWallToggle.addEventListener("change", () => {
@@ -1679,10 +2300,6 @@ finishedBasis.addEventListener("click", () => {
 wetBasis.addEventListener("click", () => {
   state.basis = "wet";
   render();
-});
-
-resetViewButton.addEventListener("click", () => {
-  resetCanvasView();
 });
 
 shrinkageInput.addEventListener("input", () => {

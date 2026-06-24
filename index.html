@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>ClayForm Designer</title>
-    <link rel="stylesheet" href="styles.css?v=20260623-explicit-uniform-1">
+    <link rel="stylesheet" href="styles.css?v=20260623-sheet-drag-3">
   </head>
   <body>
     <main class="app-shell" aria-label="ClayForm pottery profile designer">
@@ -18,11 +18,6 @@
         </div>
       </header>
 
-      <nav class="tabs" aria-label="Workflow">
-        <button class="tab active" type="button">Design</button>
-        <button class="tab" type="button">Template</button>
-      </nav>
-
       <section class="canvas-card" aria-labelledby="canvasTitle">
         <div class="canvas-header">
           <h2 id="canvasTitle">Profile</h2>
@@ -34,58 +29,84 @@
         <svg id="profileCanvas" class="profile-canvas" viewBox="0 0 588 640" role="img" aria-label="Editable pottery section drawing"></svg>
       </section>
 
-      <section class="panel section-panel" aria-labelledby="sectionTitle">
-        <div class="panel-header">
-          <h2 id="sectionTitle">Edit</h2>
-          <div class="line-toggle" aria-label="Editing line">
-            <button id="outerLineButton" class="active" type="button">Outer</button>
-            <button id="innerLineButton" type="button">Inner</button>
+      <section id="bottomInspector" class="bottom-inspector" aria-label="Editing controls">
+        <button id="inspectorToggle" class="sheet-toggle" type="button" aria-expanded="true" aria-label="Minimize controls">
+          <span aria-hidden="true"></span>
+        </button>
+
+        <div class="compact-inspector" aria-label="Collapsed editing controls">
+          <button id="compactSelectedButton" class="compact-selected" type="button" aria-label="Expand controls">
+            <span>Selected</span>
+            <strong id="compactSelectedLabel">Belly point</strong>
+          </button>
+          <div class="compact-actions">
+            <div class="compact-toggle" aria-label="Editing line">
+              <button type="button" data-compact-line="outer">Outer</button>
+              <button type="button" data-compact-line="inner">Inner</button>
+            </div>
+            <div class="compact-toggle" aria-label="Profile editing">
+              <button type="button" data-compact-kind="point">Point</button>
+              <button type="button" data-compact-kind="segment">Line</button>
+            </div>
           </div>
         </div>
 
-        <div class="section-chips" role="group" aria-label="Profile editing">
-          <button id="pointModeButton" class="section-chip active" type="button">Point</button>
-          <button id="segmentModeButton" class="section-chip" type="button">Segment</button>
-          <button id="addPointButton" class="section-chip" type="button">Add</button>
-          <button id="deletePointButton" class="section-chip" type="button">Delete</button>
-        </div>
-
-        <div class="selected-row">
-          <span>Selected</span>
+        <div class="inspector-summary" aria-label="Current selection">
+          <span id="selectedMeta">Outer point</span>
           <strong id="selectedLabel">Belly point</strong>
-          <button id="fullViewButton" type="button">Reset view</button>
         </div>
-      </section>
 
-      <section class="panel controls-panel" aria-labelledby="controlsTitle">
-        <div class="panel-header">
-          <h2 id="controlsTitle">Point controls</h2>
-          <label class="toggle">
+        <section class="panel section-panel" aria-labelledby="sectionTitle">
+          <h2 id="sectionTitle" class="visually-hidden">Edit</h2>
+          <div class="edit-toolbar" aria-label="Edit context">
+            <div class="line-toggle" aria-label="Wall">
+              <button id="outerLineButton" class="active" type="button">Outer</button>
+              <button id="innerLineButton" type="button">Inner</button>
+            </div>
+
+            <div class="mode-toggle" role="group" aria-label="Selection type">
+              <button id="pointModeButton" class="section-chip active" type="button">Point</button>
+              <button id="segmentModeButton" class="section-chip" type="button">Line</button>
+            </div>
+
+            <div class="edit-actions" aria-label="Point actions">
+              <button id="addPointButton" class="tool-button" type="button" aria-label="Add point">+</button>
+              <button id="deletePointButton" class="tool-button" type="button" aria-label="Delete point">Del</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel controls-panel" aria-labelledby="controlsTitle">
+          <div class="panel-header">
+            <h2 id="controlsTitle">Point controls</h2>
+          </div>
+
+          <div id="sectionControls" class="control-stack"></div>
+          <label id="uniformWallControl" class="toggle">
             <input id="uniformWallToggle" type="checkbox" checked>
             <span>Uniform wall</span>
           </label>
-        </div>
+        </section>
 
-        <div id="sectionControls" class="control-stack"></div>
+        <footer class="bottom-bar" aria-label="Design settings">
+          <h2 class="settings-heading">Design settings</h2>
+          <button id="clayEstimate" class="bottom-field clay-field" type="button" aria-label="Clay estimate details">
+            <span>Clay needed</span>
+            <strong id="clayEstimateValue">1.7 lb</strong>
+          </button>
+          <div class="basis-toggle" role="group" aria-label="Size basis">
+            <button id="finishedBasis" class="active" type="button">Finished size</button>
+            <button id="wetBasis" type="button">Wet size</button>
+          </div>
+          <label class="bottom-field shrink-field">
+            <span>Shrinkage</span>
+            <span class="shrink-value">
+              <input id="shrinkageInput" type="number" min="0" max="30" step="0.5" value="12">
+              <span>%</span>
+            </span>
+          </label>
+        </footer>
       </section>
-
-      <footer class="bottom-bar" aria-label="Design settings">
-        <button id="clayEstimate" class="bottom-field clay-field" type="button" aria-label="Clay estimate details">
-          <span>Clay needed</span>
-          <strong id="clayEstimateValue">1.7 lb</strong>
-        </button>
-        <div class="basis-toggle" role="group" aria-label="Size basis">
-          <button id="finishedBasis" class="active" type="button">Finished size</button>
-          <button id="wetBasis" type="button">Wet size</button>
-        </div>
-        <label class="bottom-field shrink-field">
-          <span>Shrinkage</span>
-          <span class="shrink-value">
-            <input id="shrinkageInput" type="number" min="0" max="30" step="0.5" value="12">
-            <span>%</span>
-          </span>
-        </label>
-      </footer>
     </main>
 
     <template id="rangeControlTemplate">
@@ -96,6 +117,6 @@
       </label>
     </template>
 
-    <script src="app.js?v=20260623-explicit-uniform-1" defer></script>
+    <script src="app.js?v=20260623-sheet-drag-3" defer></script>
   </body>
 </html>

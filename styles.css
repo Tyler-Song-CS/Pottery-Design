@@ -22,7 +22,8 @@
 
 html,
 body {
-  min-height: 100%;
+  height: 100%;
+  overflow: hidden;
   overscroll-behavior: none;
 }
 
@@ -48,12 +49,18 @@ button {
 }
 
 .app-shell {
+  --shell-pad-x: 16px;
   width: min(100vw, 430px);
-  min-height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   margin: 0 auto;
-  padding: max(16px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom));
+  padding: max(12px, env(safe-area-inset-top)) var(--shell-pad-x) 0;
   background: var(--paper);
   box-shadow: 0 26px 60px var(--shadow);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  overflow: hidden;
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
@@ -113,32 +120,6 @@ button {
   font-size: 20px;
 }
 
-.tabs {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 4px;
-  margin: 20px 0 14px;
-  padding: 4px;
-  border: 1px solid #cfc0aa;
-  border-radius: 999px;
-  background: #ede2ce;
-}
-
-.tab {
-  min-height: 44px;
-  border: 0;
-  border-radius: 999px;
-  color: #6c6256;
-  background: transparent;
-  font-size: 15px;
-  font-weight: 760;
-}
-
-.tab.active {
-  color: #fff7e8;
-  background: #3b3730;
-}
-
 .canvas-card,
 .panel {
   border: 1px solid var(--paper-line);
@@ -147,12 +128,14 @@ button {
 }
 
 .canvas-card {
-  padding: 14px;
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  padding: 10px;
 }
 
 .canvas-header,
 .panel-header,
-.selected-row,
 .bottom-bar {
   display: flex;
   align-items: center;
@@ -203,8 +186,10 @@ button {
 .profile-canvas {
   display: block;
   width: 100%;
-  height: clamp(360px, 58vh, 530px);
-  margin-top: 10px;
+  min-height: 0;
+  height: 100%;
+  flex: 1 1 auto;
+  margin-top: 8px;
   border-radius: var(--radius);
   background:
     linear-gradient(rgba(214, 202, 182, 0.45) 1px, transparent 1px),
@@ -222,12 +207,205 @@ button {
 }
 
 .section-panel {
-  min-height: 172px;
+  min-height: 0;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.bottom-inspector {
+  position: relative;
+  display: grid;
+  grid-auto-rows: max-content;
+  align-content: start;
+  gap: 8px;
+  max-height: min(41dvh, 346px);
+  margin: 0 calc(var(--shell-pad-x) * -1);
+  padding: 8px var(--shell-pad-x) max(12px, env(safe-area-inset-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  border-top: 1px solid var(--paper-line);
+  border-radius: 18px 18px 0 0;
+  background: var(--paper-strong);
+  box-shadow: 0 -12px 34px rgba(27, 24, 20, 0.14);
+  touch-action: pan-y;
+}
+
+.bottom-inspector.is-collapsed {
+  max-height: min(15dvh, 124px);
+  overflow: hidden;
+}
+
+.bottom-inspector.is-minimized {
+  max-height: min(8dvh, 58px);
+  padding-bottom: max(10px, env(safe-area-inset-bottom));
+  overflow: hidden;
+}
+
+.bottom-inspector.is-dragging {
+  cursor: grabbing;
+}
+
+.sheet-toggle {
+  display: grid;
+  justify-self: center;
+  width: 74px;
+  min-height: 20px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.bottom-inspector.is-minimized .sheet-toggle {
+  min-height: 30px;
+}
+
+.sheet-toggle span {
+  display: block;
+  width: 42px;
+  height: 4px;
+  border-radius: 999px;
+  background: #cabda7;
+}
+
+.sheet-toggle:focus-visible {
+  outline: 3px solid rgba(66, 104, 88, 0.35);
+  outline-offset: 2px;
+}
+
+.compact-inspector {
+  display: none;
+  gap: 8px;
+}
+
+.bottom-inspector.is-collapsed .compact-inspector {
+  display: grid;
+}
+
+.bottom-inspector.is-collapsed .inspector-summary,
+.bottom-inspector.is-collapsed .section-panel,
+.bottom-inspector.is-collapsed .controls-panel,
+.bottom-inspector.is-collapsed .bottom-bar,
+.bottom-inspector.is-minimized .compact-inspector,
+.bottom-inspector.is-minimized .inspector-summary,
+.bottom-inspector.is-minimized .section-panel,
+.bottom-inspector.is-minimized .controls-panel,
+.bottom-inspector.is-minimized .bottom-bar {
+  display: none;
+}
+
+.inspector-summary {
+  display: grid;
+  gap: 2px;
+  padding: 2px 0 4px;
+}
+
+.inspector-summary span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.inspector-summary strong {
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.05;
+}
+
+.compact-selected {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid #cabda7;
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--chip);
+  font-size: 13px;
+  font-weight: 760;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.compact-selected strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 780;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.compact-toggle {
+  display: flex;
+  gap: 3px;
+  min-width: 0;
+  padding: 3px;
+  border: 1px solid #cabda7;
+  border-radius: 999px;
+  background: var(--chip);
+}
+
+.compact-toggle button {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.compact-toggle button.active {
+  color: #fff7e8;
+  background: #3b3730;
+}
+
+.bottom-inspector .panel {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.bottom-inspector .panel-header {
+  min-height: 36px;
 }
 
 .line-toggle,
+.mode-toggle,
 .section-chip,
-.selected-row button,
+.tool-button,
 .basis-toggle,
 .bottom-field {
   border: 1px solid #cabda7;
@@ -235,6 +413,7 @@ button {
 }
 
 .line-toggle,
+.mode-toggle,
 .basis-toggle {
   display: flex;
   gap: 3px;
@@ -243,6 +422,7 @@ button {
 }
 
 .line-toggle button,
+.mode-toggle button,
 .basis-toggle button {
   min-height: 34px;
   border: 0;
@@ -258,6 +438,38 @@ button {
   padding: 0 12px;
 }
 
+.edit-toolbar {
+  display: grid;
+  grid-template-columns: 0.95fr 0.95fr auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.mode-toggle {
+  min-width: 0;
+}
+
+.mode-toggle button {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0 8px;
+}
+
+.edit-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.tool-button {
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0 10px;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .basis-toggle button {
   flex: 1 1 0;
   min-width: 0;
@@ -265,13 +477,15 @@ button {
 }
 
 .line-toggle .active,
+.mode-toggle .active,
 .basis-toggle .active,
 .section-chip.active {
   color: #fff7e8;
   background: #3b3730;
 }
 
-.section-chip:disabled {
+.section-chip:disabled,
+.tool-button:disabled {
   cursor: not-allowed;
   opacity: 0.46;
 }
@@ -279,51 +493,27 @@ button {
 .section-chips {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-  margin-top: 18px;
+  gap: 6px;
+  margin-top: 6px;
 }
 
 .section-chip {
-  min-height: 44px;
-  border-radius: 999px;
-  color: var(--muted);
-  font-size: 14px;
-  font-weight: 760;
-}
-
-.selected-row {
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 16px;
-  color: var(--muted);
-  font-size: 14px;
-  font-weight: 760;
-}
-
-.selected-row strong {
-  margin-right: auto;
-  color: var(--ink);
-  font-size: 17px;
-}
-
-.selected-row button {
-  min-height: 38px;
-  padding: 0 14px;
+  min-height: 36px;
   border-radius: 999px;
   color: var(--muted);
   font-size: 13px;
   font-weight: 760;
-  white-space: nowrap;
 }
 
 .controls-panel {
-  min-height: 214px;
+  min-height: 0;
 }
 
 .toggle {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  min-height: 36px;
   color: var(--muted);
   font-size: 13px;
   font-weight: 760;
@@ -338,8 +528,33 @@ button {
 
 .control-stack {
   display: grid;
-  gap: 14px;
-  margin-top: 18px;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.control-group {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(207, 196, 175, 0.78);
+}
+
+.control-group:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.control-group h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.control-group-body {
+  display: grid;
+  gap: 8px;
 }
 
 .line-style-control {
@@ -379,8 +594,8 @@ button {
 
 .range-control {
   display: grid;
-  grid-template-columns: 1fr 118px;
-  gap: 8px 14px;
+  grid-template-columns: 1fr 96px;
+  gap: 3px 12px;
   align-items: center;
 }
 
@@ -413,16 +628,33 @@ button {
 
 .range-control output {
   color: var(--ink);
-  font-size: 24px;
+  font-size: 19px;
   font-weight: 780;
   text-align: right;
 }
 
 .bottom-bar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 8px;
-  margin-top: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(207, 196, 175, 0.82);
+}
+
+.settings-heading {
+  grid-column: 1 / -1;
+  order: -2;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.bottom-bar .basis-toggle {
+  grid-column: 1 / -1;
+  order: -1;
 }
 
 .bottom-field {
@@ -430,12 +662,17 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 48px;
-  padding: 0 14px;
+  min-height: 40px;
+  padding: 0 12px;
   border-radius: 999px;
   color: var(--muted);
   font-size: 13px;
   font-weight: 760;
+}
+
+.bottom-bar .basis-toggle,
+.bottom-bar .bottom-field {
+  opacity: 0.92;
 }
 
 .clay-field {
@@ -656,15 +893,15 @@ button {
   }
 
   .app-shell {
-    min-height: auto;
+    height: calc(100dvh - 56px);
+    min-height: 0;
     border-radius: 44px;
   }
 }
 
 @media (max-width: 380px) {
   .app-shell {
-    padding-left: 12px;
-    padding-right: 12px;
+    --shell-pad-x: 12px;
   }
 
   .topbar {
