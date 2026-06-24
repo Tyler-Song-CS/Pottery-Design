@@ -33,6 +33,29 @@ const baseViewBox = {
 
 const canvasView = { ...baseViewBox };
 const activePointers = new Map();
+const storageKey = "clayform:design:v1";
+const persistedStateKeys = [
+  "basis",
+  "editingLine",
+  "selectedKind",
+  "selectedPointId",
+  "selectedSegmentId",
+  "inspectorState",
+  "uniformWall",
+  "shrinkage",
+  "wallThickness",
+  "rimThickness",
+  "floorThickness",
+  "footRingWidth",
+  "margin",
+  "clayDensity",
+  "nextPointId",
+  "outerPoints",
+  "innerPoints",
+  "segmentStyles",
+  "segmentCurves",
+  "pointJoints"
+];
 
 const state = {
   basis: "finished",
@@ -84,6 +107,7 @@ let pinchGesture = null;
 let suppressCanvasClick = false;
 let suppressSheetClick = false;
 let lastInspectorContext = "";
+let persistenceTimer = null;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -116,6 +140,100 @@ function outputText(finishedValue) {
 
 function titleCase(text) {
   return `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+}
+
+function cloneForPersistence(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function persistedStateSnapshot() {
+  return persistedStateKeys.reduce((snapshot, key) => {
+    snapshot[key] = cloneForPersistence(state[key]);
+    return snapshot;
+  }, {});
+}
+
+function persistDesignNow() {
+  if (persistenceTimer) {
+    window.clearTimeout(persistenceTimer);
+    persistenceTimer = null;
+  }
+
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify({
+      version: 1,
+      state: persistedStateSnapshot(),
+      canvasView: cloneForPersistence(canvasView),
+      savedAt: new Date().toISOString()
+    }));
+  } catch {
+    // Local storage can be unavailable in private or restricted browser modes.
+  }
+}
+
+function schedulePersistDesign() {
+  if (persistenceTimer) {
+    window.clearTimeout(persistenceTimer);
+  }
+
+  persistenceTimer = window.setTimeout(persistDesignNow, 120);
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function restorePersistedCanvasView(savedCanvasView) {
+  if (!isRecord(savedCanvasView)) {
+    return;
+  }
+
+  const nextView = {
+    x: Number(savedCanvasView.x),
+    y: Number(savedCanvasView.y),
+    width: Number(savedCanvasView.width),
+    height: Number(savedCanvasView.height)
+  };
+
+  if (Object.values(nextView).every(Number.isFinite)) {
+    setCanvasView(nextView);
+  }
+}
+
+function restorePersistedDesign() {
+  try {
+    const rawDesign = window.localStorage.getItem(storageKey);
+
+    if (!rawDesign) {
+      return;
+    }
+
+    const savedDesign = JSON.parse(rawDesign);
+
+    if (!isRecord(savedDesign) || savedDesign.version !== 1 || !isRecord(savedDesign.state)) {
+      return;
+    }
+
+    if (
+      !Array.isArray(savedDesign.state.outerPoints)
+      || !Array.isArray(savedDesign.state.innerPoints)
+      || !isRecord(savedDesign.state.segmentStyles)
+      || !isRecord(savedDesign.state.segmentCurves)
+      || !isRecord(savedDesign.state.pointJoints)
+    ) {
+      return;
+    }
+
+    persistedStateKeys.forEach((key) => {
+      if (Object.prototype.hasOwnProperty.call(savedDesign.state, key)) {
+        state[key] = savedDesign.state[key];
+      }
+    });
+    restorePersistedCanvasView(savedDesign.canvasView);
+    normalizeState();
+  } catch {
+    // Ignore corrupted saved data and continue with the built-in starter form.
+  }
 }
 
 function isOuterOnlyPoint(pointOrId) {
@@ -1626,6 +1744,7 @@ function render({ controls = true } = {}) {
   if (controls) {
     renderControls();
   }
+  schedulePersistDesign();
 }
 
 function selectPoint(line, pointId) {
@@ -2307,7 +2426,16 @@ shrinkageInput.addEventListener("input", () => {
   render();
 });
 
+window.addEventListener("pagehide", persistDesignNow);
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    persistDesignNow();
+  }
+});
+
 try {
+  restorePersistedDesign();
   render();
 } catch (error) {
   window.__clayFormRenderError = {
