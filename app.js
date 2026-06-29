@@ -24,6 +24,15 @@ const compactSelectedLabel = document.querySelector("#compactSelectedLabel");
 const compactLineButtons = document.querySelectorAll("[data-compact-line]");
 const compactKindButtons = document.querySelectorAll("[data-compact-kind]");
 const arQuickLookLink = document.querySelector("#arQuickLookLink");
+const projectMenuButton = document.querySelector("#projectMenuButton");
+const potTitle = document.querySelector("#potTitle");
+const saveStatus = document.querySelector("#saveStatus");
+const projectOverlay = document.querySelector("#projectOverlay");
+const projectBackButton = document.querySelector("#projectBackButton");
+const projectCloseButton = document.querySelector("#projectCloseButton");
+const projectSheetEyebrow = document.querySelector("#projectSheetEyebrow");
+const projectSheetTitle = document.querySelector("#projectSheetTitle");
+const projectSheetBody = document.querySelector("#projectSheetBody");
 
 const baseViewBox = {
   x: 0,
@@ -34,7 +43,8 @@ const baseViewBox = {
 
 const canvasView = { ...baseViewBox };
 const activePointers = new Map();
-const storageKey = "clayform:design:v1";
+const legacyStorageKey = "clayform:design:v1";
+const libraryStorageKey = "clayform:library:v1";
 const persistedStateKeys = [
   "basis",
   "editingLine",
@@ -99,6 +109,116 @@ const state = {
   pointJoints: {}
 };
 
+const starterStateSnapshot = JSON.parse(JSON.stringify(state));
+const starterCanvasView = { ...baseViewBox };
+const potTemplates = [
+  {
+    id: "blank",
+    name: "Blank",
+    detail: "7.3 x 5.3 in",
+    points: starterStateSnapshot.outerPoints,
+    straightSegments: []
+  },
+  {
+    id: "cylinder",
+    name: "Cylinder",
+    detail: "6.0 x 3.5 in",
+    points: [
+      { id: "rim", label: "Rim", height: 6, radius: 1.75, fixed: "top" },
+      { id: "shoulder", label: "Shoulder", height: 4.8, radius: 1.75 },
+      { id: "belly", label: "Belly", height: 3.2, radius: 1.75 },
+      { id: "lower", label: "Lower", height: 1.4, radius: 1.7 },
+      { id: "foot", label: "Foot", height: 0.28, radius: 1.35 },
+      { id: "base", label: "Base", height: 0, radius: 1.35, fixed: "base" }
+    ],
+    straightSegments: ["rim-shoulder", "shoulder-belly", "belly-lower"]
+  },
+  {
+    id: "bowl",
+    name: "Bowl",
+    detail: "3.7 x 7.0 in",
+    points: [
+      { id: "rim", label: "Rim", height: 3.7, radius: 3.5, fixed: "top" },
+      { id: "shoulder", label: "Shoulder", height: 3, radius: 3.15 },
+      { id: "belly", label: "Belly", height: 2, radius: 2.25 },
+      { id: "lower", label: "Lower", height: 0.9, radius: 1.35 },
+      { id: "foot", label: "Foot", height: 0.28, radius: 0.95 },
+      { id: "base", label: "Base", height: 0, radius: 0.95, fixed: "base" }
+    ],
+    straightSegments: []
+  },
+  {
+    id: "vase",
+    name: "Vase",
+    detail: "7.5 x 5.0 in",
+    points: [
+      { id: "rim", label: "Rim", height: 7.5, radius: 1.45, fixed: "top" },
+      { id: "shoulder", label: "Shoulder", height: 5.8, radius: 2.05 },
+      { id: "belly", label: "Belly", height: 3.6, radius: 2.5 },
+      { id: "lower", label: "Lower", height: 1.45, radius: 1.5 },
+      { id: "foot", label: "Foot", height: 0.35, radius: 1.05 },
+      { id: "base", label: "Base", height: 0, radius: 1.05, fixed: "base" }
+    ],
+    straightSegments: []
+  },
+  {
+    id: "bottle",
+    name: "Bottle",
+    detail: "8.0 x 4.4 in",
+    points: [
+      { id: "rim", label: "Rim", height: 8, radius: 0.85, fixed: "top" },
+      { id: "shoulder", label: "Shoulder", height: 6.35, radius: 1.15 },
+      { id: "belly", label: "Belly", height: 3.65, radius: 2.2 },
+      { id: "lower", label: "Lower", height: 1.55, radius: 1.45 },
+      { id: "foot", label: "Foot", height: 0.32, radius: 1.05 },
+      { id: "base", label: "Base", height: 0, radius: 1.05, fixed: "base" }
+    ],
+    straightSegments: []
+  },
+  {
+    id: "planter",
+    name: "Planter",
+    detail: "5.0 x 6.5 in",
+    points: [
+      { id: "rim", label: "Rim", height: 5, radius: 3.25, fixed: "top" },
+      { id: "shoulder", label: "Shoulder", height: 4.1, radius: 3.05 },
+      { id: "belly", label: "Belly", height: 2.65, radius: 2.8 },
+      { id: "lower", label: "Lower", height: 1.05, radius: 2.25 },
+      { id: "foot", label: "Foot", height: 0.3, radius: 1.9 },
+      { id: "base", label: "Base", height: 0, radius: 1.9, fixed: "base" }
+    ],
+    straightSegments: ["rim-shoulder", "shoulder-belly", "belly-lower"]
+  },
+  {
+    id: "footed-bowl",
+    name: "Footed bowl",
+    detail: "4.3 x 6.3 in",
+    points: [
+      { id: "rim", label: "Rim", height: 4.3, radius: 3.15, fixed: "top" },
+      { id: "shoulder", label: "Shoulder", height: 3.45, radius: 2.85 },
+      { id: "belly", label: "Belly", height: 2.15, radius: 2.1 },
+      { id: "lower", label: "Lower", height: 1.1, radius: 1.35 },
+      { id: "foot", label: "Foot", height: 0.62, radius: 1.1 },
+      { id: "base", label: "Base", height: 0, radius: 0.85, fixed: "base" }
+    ],
+    straightSegments: []
+  },
+  {
+    id: "wide-jar",
+    name: "Wide jar",
+    detail: "5.8 x 7.2 in",
+    points: [
+      { id: "rim", label: "Rim", height: 5.8, radius: 2.35, fixed: "top" },
+      { id: "shoulder", label: "Shoulder", height: 4.8, radius: 3.15 },
+      { id: "belly", label: "Belly", height: 3, radius: 3.6 },
+      { id: "lower", label: "Lower", height: 1.25, radius: 2.25 },
+      { id: "foot", label: "Foot", height: 0.34, radius: 1.45 },
+      { id: "base", label: "Base", height: 0, radius: 1.45, fixed: "base" }
+    ],
+    straightSegments: []
+  }
+];
+
 const outerOnlyPointIds = new Set(["foot", "base"]);
 
 let dragHandle = null;
@@ -110,6 +230,12 @@ let suppressSheetClick = false;
 let lastInspectorContext = "";
 let persistenceTimer = null;
 let arModelUrl = null;
+let sheetSettleTimer = null;
+let currentPotId = null;
+let currentPotTitle = "Small vase";
+let currentPotCreatedAt = null;
+let savedStatusTimer = null;
+let projectView = "saved";
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -155,6 +281,198 @@ function persistedStateSnapshot() {
   }, {});
 }
 
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function makePotId() {
+  return `pot-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function starterStateForTemplate(template = potTemplates[0]) {
+  const nextState = cloneForPersistence(starterStateSnapshot);
+  const points = cloneForPersistence(template.points);
+  const segmentStyles = {};
+  const segmentCurves = {};
+
+  points.slice(0, -1).forEach((point, index) => {
+    const nextPoint = points[index + 1];
+    const id = segmentKey(point.id, nextPoint.id);
+    const isStraight = template.straightSegments?.includes(id);
+    segmentStyles[id] = isStraight ? "straight" : "curve";
+
+    if (!isStraight) {
+      segmentCurves[curveStorageKey("outer", id)] = segmentControlFromPoints(point, nextPoint);
+    }
+  });
+
+  nextState.outerPoints = points;
+  nextState.innerPoints = [];
+  nextState.segmentStyles = segmentStyles;
+  nextState.segmentCurves = segmentCurves;
+  nextState.pointJoints = {};
+  nextState.uniformWall = true;
+  nextState.nextPointId = 1;
+  nextState.editingLine = "outer";
+  nextState.selectedKind = "point";
+  nextState.selectedPointId = points.find((point) => point.id === "belly")?.id || points[0]?.id || "rim";
+  nextState.selectedSegmentId = selectedSegmentIdForTemplatePoints(points, nextState.selectedPointId);
+  nextState.inspectorState = "expanded";
+
+  return nextState;
+}
+
+function selectedSegmentIdForTemplatePoints(points, pointId) {
+  const index = pointIndex(points, pointId);
+  const first = points[index] || points[0];
+  const second = points[index + 1] || points[index - 1] || points[1];
+  return first && second ? segmentKey(first.id, second.id) : "rim-shoulder";
+}
+
+function createPotRecord({ title, stateSnapshot = persistedStateSnapshot(), canvasSnapshot = canvasView, createdAt = nowIso() }) {
+  const timestamp = nowIso();
+
+  return {
+    id: makePotId(),
+    title: title || "Untitled pot",
+    createdAt,
+    updatedAt: timestamp,
+    state: cloneForPersistence(stateSnapshot),
+    canvasView: cloneForPersistence(canvasSnapshot)
+  };
+}
+
+function readLegacyDesign() {
+  try {
+    const rawDesign = window.localStorage.getItem(legacyStorageKey);
+
+    if (!rawDesign) {
+      return null;
+    }
+
+    const savedDesign = JSON.parse(rawDesign);
+
+    if (!isRecord(savedDesign) || !isRecord(savedDesign.state)) {
+      return null;
+    }
+
+    return savedDesign;
+  } catch {
+    return null;
+  }
+}
+
+function isValidPotRecord(record) {
+  return isRecord(record)
+    && typeof record.id === "string"
+    && typeof record.title === "string"
+    && isRecord(record.state)
+    && Array.isArray(record.state.outerPoints)
+    && Array.isArray(record.state.innerPoints)
+    && isRecord(record.state.segmentStyles)
+    && isRecord(record.state.segmentCurves)
+    && isRecord(record.state.pointJoints);
+}
+
+function readProjectLibrary() {
+  try {
+    const rawLibrary = window.localStorage.getItem(libraryStorageKey);
+
+    if (!rawLibrary) {
+      return null;
+    }
+
+    const library = JSON.parse(rawLibrary);
+
+    if (!isRecord(library) || library.version !== 1 || !Array.isArray(library.pots)) {
+      return null;
+    }
+
+    const pots = library.pots.filter(isValidPotRecord);
+
+    if (pots.length === 0) {
+      return null;
+    }
+
+    return {
+      version: 1,
+      currentPotId: typeof library.currentPotId === "string" ? library.currentPotId : pots[0].id,
+      pots
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeProjectLibrary(library) {
+  window.localStorage.setItem(libraryStorageKey, JSON.stringify({
+    version: 1,
+    currentPotId: library.currentPotId,
+    pots: library.pots
+  }));
+}
+
+function currentProjectLibrary() {
+  const library = readProjectLibrary();
+
+  if (library) {
+    return library;
+  }
+
+  const createdAt = nowIso();
+  const legacyDesign = readLegacyDesign();
+  const initialPot = legacyDesign
+    ? createPotRecord({
+      title: "Small vase",
+      stateSnapshot: legacyDesign.state,
+      canvasSnapshot: legacyDesign.canvasView || starterCanvasView,
+      createdAt
+    })
+    : createPotRecord({
+      title: currentPotTitle,
+      stateSnapshot: persistedStateSnapshot(),
+      canvasSnapshot: canvasView,
+      createdAt
+    });
+  const nextLibrary = {
+    version: 1,
+    currentPotId: initialPot.id,
+    pots: [initialPot]
+  };
+
+  writeProjectLibrary(nextLibrary);
+  return nextLibrary;
+}
+
+function applyStateSnapshot(snapshot) {
+  persistedStateKeys.forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(snapshot, key)) {
+      state[key] = cloneForPersistence(snapshot[key]);
+    }
+  });
+}
+
+function loadPotRecord(record) {
+  currentPotId = record.id;
+  currentPotTitle = record.title;
+  currentPotCreatedAt = record.createdAt || nowIso();
+  applyStateSnapshot(record.state);
+  restorePersistedCanvasView(record.canvasView || starterCanvasView);
+  normalizeState();
+  lastInspectorContext = "";
+}
+
+function activePotRecord(library = currentProjectLibrary()) {
+  return library.pots.find((pot) => pot.id === currentPotId)
+    || library.pots.find((pot) => pot.id === library.currentPotId)
+    || library.pots[0];
+}
+
+function setSaveStatus(status) {
+  saveStatus.textContent = status;
+  saveStatus.classList.toggle("is-saving", status === "Saving...");
+}
+
 function persistDesignNow() {
   if (persistenceTimer) {
     window.clearTimeout(persistenceTimer);
@@ -162,12 +480,38 @@ function persistDesignNow() {
   }
 
   try {
-    window.localStorage.setItem(storageKey, JSON.stringify({
+    const library = currentProjectLibrary();
+    const potIndex = library.pots.findIndex((pot) => pot.id === currentPotId);
+    const timestamp = nowIso();
+    const nextRecord = {
+      ...(potIndex >= 0 ? library.pots[potIndex] : createPotRecord({ title: currentPotTitle })),
+      id: currentPotId || makePotId(),
+      title: currentPotTitle,
+      createdAt: currentPotCreatedAt || timestamp,
+      updatedAt: timestamp,
+      state: persistedStateSnapshot(),
+      canvasView: cloneForPersistence(canvasView)
+    };
+
+    currentPotId = nextRecord.id;
+    currentPotCreatedAt = nextRecord.createdAt;
+    library.currentPotId = nextRecord.id;
+
+    if (potIndex >= 0) {
+      library.pots[potIndex] = nextRecord;
+    } else {
+      library.pots.unshift(nextRecord);
+    }
+
+    writeProjectLibrary(library);
+    window.localStorage.setItem(legacyStorageKey, JSON.stringify({
       version: 1,
       state: persistedStateSnapshot(),
       canvasView: cloneForPersistence(canvasView),
-      savedAt: new Date().toISOString()
+      savedAt: timestamp
     }));
+    setSaveStatus("Saved");
+    renderProjectSheet();
   } catch {
     // Local storage can be unavailable in private or restricted browser modes.
   }
@@ -178,6 +522,7 @@ function schedulePersistDesign() {
     window.clearTimeout(persistenceTimer);
   }
 
+  setSaveStatus("Saving...");
   persistenceTimer = window.setTimeout(persistDesignNow, 120);
 }
 
@@ -203,38 +548,11 @@ function restorePersistedCanvasView(savedCanvasView) {
 }
 
 function restorePersistedDesign() {
-  try {
-    const rawDesign = window.localStorage.getItem(storageKey);
+  const library = currentProjectLibrary();
+  const record = activePotRecord(library);
 
-    if (!rawDesign) {
-      return;
-    }
-
-    const savedDesign = JSON.parse(rawDesign);
-
-    if (!isRecord(savedDesign) || savedDesign.version !== 1 || !isRecord(savedDesign.state)) {
-      return;
-    }
-
-    if (
-      !Array.isArray(savedDesign.state.outerPoints)
-      || !Array.isArray(savedDesign.state.innerPoints)
-      || !isRecord(savedDesign.state.segmentStyles)
-      || !isRecord(savedDesign.state.segmentCurves)
-      || !isRecord(savedDesign.state.pointJoints)
-    ) {
-      return;
-    }
-
-    persistedStateKeys.forEach((key) => {
-      if (Object.prototype.hasOwnProperty.call(savedDesign.state, key)) {
-        state[key] = savedDesign.state[key];
-      }
-    });
-    restorePersistedCanvasView(savedDesign.canvasView);
-    normalizeState();
-  } catch {
-    // Ignore corrupted saved data and continue with the built-in starter form.
+  if (record) {
+    loadPotRecord(record);
   }
 }
 
@@ -1996,6 +2314,8 @@ function renderControls() {
 function renderChrome() {
   normalizeState();
   const estimate = estimateClay();
+  potTitle.textContent = currentPotTitle;
+  document.title = `${currentPotTitle} - ClayForm Designer`;
   clayEstimateValue.textContent = `${estimate.pounds.toFixed(1)} lb`;
   clayEstimate.setAttribute(
     "aria-label",
@@ -2046,6 +2366,405 @@ function render({ controls = true } = {}) {
     renderControls();
   }
   schedulePersistDesign();
+}
+
+function formatPotDimension(value) {
+  return `${value.toFixed(1)} in`;
+}
+
+function activeSizeForState(snapshot, value) {
+  const shrink = Math.max(0.01, 1 - (Number(snapshot.shrinkage) || 0) / 100);
+  return snapshot.basis === "wet" ? value / shrink : value;
+}
+
+function potMetrics(snapshot) {
+  const points = Array.isArray(snapshot.outerPoints) ? snapshot.outerPoints : starterStateSnapshot.outerPoints;
+  const height = Math.max(...points.map((point) => Number(point.height) || 0));
+  const diameter = Math.max(...points.map((point) => (Number(point.radius) || 0) * 2));
+
+  return {
+    basis: snapshot.basis === "wet" ? "Wet" : "Finished",
+    height: activeSizeForState(snapshot, height),
+    diameter: activeSizeForState(snapshot, diameter)
+  };
+}
+
+function formatUpdatedDate(value) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "Saved";
+  }
+
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric"
+  });
+}
+
+function thumbnailPath(points) {
+  const safePoints = points.length >= 2 ? points : starterStateSnapshot.outerPoints;
+  const maxHeight = Math.max(...safePoints.map((point) => Number(point.height) || 0), 1);
+  const maxRadius = Math.max(...safePoints.map((point) => Number(point.radius) || 0), 1);
+  const centerX = 29;
+  const bottomY = 56;
+  const scale = Math.min(24 / maxRadius, 52 / maxHeight);
+  const right = safePoints.map((point) => ({
+    x: centerX + point.radius * scale,
+    y: bottomY - point.height * scale
+  }));
+  const left = safePoints.toReversed
+    ? safePoints.toReversed().map((point) => ({
+      x: centerX - point.radius * scale,
+      y: bottomY - point.height * scale
+    }))
+    : [...safePoints].reverse().map((point) => ({
+      x: centerX - point.radius * scale,
+      y: bottomY - point.height * scale
+    }));
+  const pathPoints = [...right, ...left];
+  return `M${pathPoints.map((point) => `${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(" L")} Z`;
+}
+
+function createThumbnail(points, className) {
+  const svgElement = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  const centerLine = document.createElementNS("http://www.w3.org/2000/svg", "path");
+
+  svgElement.setAttribute("class", className);
+  svgElement.setAttribute("viewBox", "0 0 58 60");
+  svgElement.setAttribute("aria-hidden", "true");
+  centerLine.setAttribute("d", "M29 4 V56");
+  centerLine.setAttribute("stroke", "#d6cab6");
+  centerLine.setAttribute("stroke-width", "1");
+  centerLine.setAttribute("stroke-dasharray", "4 4");
+  path.setAttribute("d", thumbnailPath(points));
+  path.setAttribute("fill", "#cdbb9c");
+  path.setAttribute("stroke", "#302d28");
+  path.setAttribute("stroke-width", "1.7");
+  path.setAttribute("stroke-linejoin", "round");
+  svgElement.append(centerLine, path);
+
+  return svgElement;
+}
+
+function normalizedProjectView(view) {
+  return view === "templates" ? "templates" : "saved";
+}
+
+function setProjectView(nextView) {
+  projectView = normalizedProjectView(nextView);
+  renderProjectSheet(true);
+}
+
+function openProjectSheet(view = "saved") {
+  projectOverlay.hidden = false;
+  projectView = normalizedProjectView(view);
+  renderProjectSheet(true);
+}
+
+function closeProjectSheet() {
+  projectOverlay.hidden = true;
+}
+
+function estimateClayForSnapshot(snapshot) {
+  const currentSnapshot = persistedStateSnapshot();
+  let estimate = null;
+
+  try {
+    applyStateSnapshot(snapshot);
+    normalizeState();
+    estimate = estimateClay();
+  } finally {
+    applyStateSnapshot(currentSnapshot);
+    normalizeState();
+  }
+
+  return estimate;
+}
+
+function createProjectActionButton(label, detail, action, variant = "") {
+  const button = document.createElement("button");
+  const detailNode = document.createElement("span");
+
+  button.className = `project-action ${variant}`.trim();
+  button.type = "button";
+  button.textContent = label;
+  if (detail) {
+    detailNode.textContent = detail;
+    button.appendChild(detailNode);
+  }
+  button.addEventListener("click", action);
+
+  return button;
+}
+
+function renderProjectSummary() {
+  const summary = document.createElement("section");
+  const meta = document.createElement("div");
+  const title = document.createElement("strong");
+  const size = document.createElement("span");
+  const clay = document.createElement("span");
+  const metrics = potMetrics(persistedStateSnapshot());
+  const estimate = estimateClay();
+
+  summary.className = "current-pot-card";
+  summary.setAttribute("aria-label", "Current pot");
+  meta.className = "current-pot-meta";
+  title.textContent = currentPotTitle;
+  size.textContent = `${formatPotDimension(metrics.height)} x ${formatPotDimension(metrics.diameter)} ${metrics.basis}`;
+  clay.textContent = `${estimate.pounds.toFixed(1)} lb clay`;
+  meta.append(title, size, clay);
+  summary.append(createThumbnail(state.outerPoints, "current-pot-thumb"), meta);
+  projectSheetBody.appendChild(summary);
+}
+
+function renderProjectActions() {
+  const actions = document.createElement("div");
+
+  actions.className = "project-action-grid";
+  actions.append(
+    createProjectActionButton("+ New pot", "", () => setProjectView("templates"), "primary"),
+    createProjectActionButton("Duplicate", "", duplicateCurrentPot),
+    createProjectActionButton("Rename", "", renameCurrentPot),
+    createProjectActionButton("Delete", "", deleteCurrentPot, "danger")
+  );
+
+  projectSheetBody.appendChild(actions);
+}
+
+function createProjectTabButton(view, label, detail = "") {
+  const button = document.createElement("button");
+  const detailNode = document.createElement("span");
+  const active = projectView === view;
+
+  button.className = active ? "active" : "";
+  button.type = "button";
+  button.setAttribute("role", "tab");
+  button.setAttribute("aria-selected", String(active));
+  button.textContent = label;
+
+  if (detail) {
+    detailNode.textContent = detail;
+    button.appendChild(detailNode);
+  }
+
+  button.addEventListener("click", () => setProjectView(view));
+
+  return button;
+}
+
+function renderProjectTabs(library) {
+  const tabs = document.createElement("div");
+
+  tabs.className = "project-tabs";
+  tabs.setAttribute("role", "tablist");
+  tabs.setAttribute("aria-label", "Pot library views");
+  tabs.append(
+    createProjectTabButton("saved", "Saved", `${library.pots.length}`),
+    createProjectTabButton("templates", "Templates", `${potTemplates.length}`)
+  );
+
+  projectSheetBody.appendChild(tabs);
+}
+
+function renderTemplatePicker() {
+  const grid = document.createElement("div");
+  grid.className = "template-grid";
+
+  potTemplates.forEach((template) => {
+    const button = document.createElement("button");
+    const meta = document.createElement("span");
+    const title = document.createElement("strong");
+    const text = document.createElement("span");
+
+    button.className = "template-card";
+    button.type = "button";
+    title.textContent = template.name;
+    text.textContent = template.detail;
+    meta.className = "template-meta";
+    meta.append(title, text);
+    button.append(createThumbnail(template.points, "template-thumb"), meta);
+    button.addEventListener("click", () => createPotFromTemplate(template));
+    grid.appendChild(button);
+  });
+
+  projectSheetBody.appendChild(grid);
+}
+
+function renderSavedPots() {
+  const library = currentProjectLibrary();
+  const list = document.createElement("div");
+  const sortedPots = [...library.pots].sort((first, second) => (
+    new Date(second.updatedAt).getTime() - new Date(first.updatedAt).getTime()
+  ));
+
+  list.className = "saved-pot-list";
+
+  if (sortedPots.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = "No saved pots yet.";
+    projectSheetBody.appendChild(empty);
+    return;
+  }
+
+  sortedPots.forEach((pot) => {
+    const button = document.createElement("button");
+    const meta = document.createElement("span");
+    const title = document.createElement("strong");
+    const detail = document.createElement("span");
+    const date = document.createElement("span");
+    const metrics = potMetrics(pot.state);
+    const clay = estimateClayForSnapshot(pot.state);
+
+    button.className = pot.id === currentPotId ? "saved-pot-item current" : "saved-pot-item";
+    button.type = "button";
+    title.textContent = pot.title;
+    detail.textContent = `${formatPotDimension(metrics.height)} x ${formatPotDimension(metrics.diameter)} ${metrics.basis}`;
+    if (clay) {
+      detail.textContent += ` · ${clay.pounds.toFixed(1)} lb clay`;
+    }
+    date.textContent = pot.id === currentPotId ? "Open now" : formatUpdatedDate(pot.updatedAt);
+    meta.className = "saved-pot-meta";
+    meta.append(title, detail, date);
+    button.append(createThumbnail(pot.state.outerPoints, "saved-pot-thumb"), meta);
+    button.addEventListener("click", () => openSavedPot(pot.id));
+    list.appendChild(button);
+  });
+
+  projectSheetBody.appendChild(list);
+}
+
+function renderProjectSheet(force = false) {
+  if (projectOverlay.hidden && !force) {
+    return;
+  }
+
+  const library = currentProjectLibrary();
+
+  projectView = normalizedProjectView(projectView);
+  projectSheetBody.replaceChildren();
+  projectBackButton.hidden = true;
+  projectSheetEyebrow.textContent = "Library";
+  projectSheetTitle.textContent = "My Pots";
+  renderProjectSummary();
+  renderProjectActions();
+  renderProjectTabs(library);
+
+  if (projectView === "templates") {
+    renderTemplatePicker();
+    return;
+  }
+
+  renderSavedPots();
+}
+
+function saveCurrentBeforeSwitch() {
+  persistDesignNow();
+}
+
+function createPotFromTemplate(template) {
+  saveCurrentBeforeSwitch();
+  const library = currentProjectLibrary();
+  const nextRecord = createPotRecord({
+    title: template.name,
+    stateSnapshot: starterStateForTemplate(template),
+    canvasSnapshot: starterCanvasView
+  });
+
+  library.pots.unshift(nextRecord);
+  library.currentPotId = nextRecord.id;
+  writeProjectLibrary(library);
+  loadPotRecord(nextRecord);
+  closeProjectSheet();
+  render();
+}
+
+function openSavedPot(potId) {
+  saveCurrentBeforeSwitch();
+  const library = currentProjectLibrary();
+  const record = library.pots.find((pot) => pot.id === potId);
+
+  if (!record) {
+    return;
+  }
+
+  library.currentPotId = record.id;
+  writeProjectLibrary(library);
+  loadPotRecord(record);
+  closeProjectSheet();
+  render();
+}
+
+function renameCurrentPot() {
+  const nextTitle = window.prompt("Pot name", currentPotTitle);
+
+  if (!nextTitle || nextTitle.trim() === "") {
+    return;
+  }
+
+  currentPotTitle = nextTitle.trim().slice(0, 48);
+  renderChrome();
+  persistDesignNow();
+  renderProjectSheet(true);
+}
+
+function duplicateCurrentPot() {
+  saveCurrentBeforeSwitch();
+  const library = currentProjectLibrary();
+  const duplicate = createPotRecord({
+    title: `${currentPotTitle} copy`,
+    stateSnapshot: persistedStateSnapshot(),
+    canvasSnapshot: canvasView
+  });
+
+  library.pots.unshift(duplicate);
+  library.currentPotId = duplicate.id;
+  writeProjectLibrary(library);
+  loadPotRecord(duplicate);
+  closeProjectSheet();
+  render();
+}
+
+function deleteCurrentPot() {
+  const library = currentProjectLibrary();
+  const message = library.pots.length > 1
+    ? `Delete "${currentPotTitle}"?`
+    : "Delete this pot and start a blank one?";
+
+  if (!window.confirm(message)) {
+    return;
+  }
+
+  if (library.pots.length <= 1) {
+    const blankTemplate = potTemplates[0];
+    const replacement = createPotRecord({
+      title: blankTemplate.name,
+      stateSnapshot: starterStateForTemplate(blankTemplate),
+      canvasSnapshot: starterCanvasView
+    });
+    const nextLibrary = {
+      version: 1,
+      currentPotId: replacement.id,
+      pots: [replacement]
+    };
+    writeProjectLibrary(nextLibrary);
+    loadPotRecord(replacement);
+  } else {
+    const nextPots = library.pots.filter((pot) => pot.id !== currentPotId);
+    const nextRecord = nextPots[0];
+    const nextLibrary = {
+      version: 1,
+      currentPotId: nextRecord.id,
+      pots: nextPots
+    };
+    writeProjectLibrary(nextLibrary);
+    loadPotRecord(nextRecord);
+  }
+
+  closeProjectSheet();
+  render();
 }
 
 function selectPoint(line, pointId) {
@@ -2518,13 +3237,84 @@ function nextInspectorState() {
   return "expanded";
 }
 
-function setInspectorState(nextState) {
+function inspectorSnapHeight(inspectorState) {
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 844;
+
+  if (inspectorState === "expanded") {
+    return Math.min(viewportHeight * 0.41, 346);
+  }
+
+  if (inspectorState === "compact") {
+    return Math.min(viewportHeight * 0.15, 124);
+  }
+
+  return Math.min(viewportHeight * 0.08, 58);
+}
+
+function clearSheetInlineSize() {
+  bottomInspector.style.height = "";
+  bottomInspector.style.maxHeight = "";
+}
+
+function scheduleSheetSizeCleanup() {
+  if (sheetSettleTimer) {
+    window.clearTimeout(sheetSettleTimer);
+  }
+
+  sheetSettleTimer = window.setTimeout(() => {
+    sheetSettleTimer = null;
+    if (!sheetDrag) {
+      clearSheetInlineSize();
+    }
+  }, 220);
+}
+
+function closestInspectorStateForHeight(height) {
+  const states = ["expanded", "compact", "minimized"];
+  return states.reduce((closestState, candidateState) => {
+    const closestDistance = Math.abs(inspectorSnapHeight(closestState) - height);
+    const candidateDistance = Math.abs(inspectorSnapHeight(candidateState) - height);
+    return candidateDistance < closestDistance ? candidateState : closestState;
+  }, state.inspectorState);
+}
+
+function inspectorStateFromDrag(startState, currentHeight, velocityY) {
+  if (velocityY < -0.45) {
+    return "expanded";
+  }
+
+  if (velocityY > 0.45) {
+    return startState === "expanded" ? "compact" : "minimized";
+  }
+
+  return closestInspectorStateForHeight(currentHeight);
+}
+
+function setInspectorState(nextState, options = {}) {
   if (!isInspectorState(nextState)) {
     return;
   }
+
+  const fromHeight = Number.isFinite(options.fromHeight) ? options.fromHeight : null;
+
+  if (fromHeight !== null) {
+    bottomInspector.style.height = `${fromHeight}px`;
+    bottomInspector.style.maxHeight = `${fromHeight}px`;
+    bottomInspector.getBoundingClientRect();
+  } else {
+    clearSheetInlineSize();
+  }
+
   state.inspectorState = nextState;
   render();
   bottomInspector.scrollTop = 0;
+
+  if (fromHeight !== null) {
+    const targetHeight = inspectorSnapHeight(nextState);
+    bottomInspector.style.height = `${targetHeight}px`;
+    bottomInspector.style.maxHeight = `${targetHeight}px`;
+    scheduleSheetSizeCleanup();
+  }
 }
 
 function suppressNextSheetClick() {
@@ -2532,20 +3322,6 @@ function suppressNextSheetClick() {
   window.setTimeout(() => {
     suppressSheetClick = false;
   }, 450);
-}
-
-function sheetStateFromSwipe(startState, deltaY, elapsedMs) {
-  const distance = Math.abs(deltaY);
-  const isQuickSwipe = elapsedMs < 260 && distance > 16;
-  if (distance < 30 && !isQuickSwipe) {
-    return null;
-  }
-
-  if (deltaY < 0) {
-    return "expanded";
-  }
-
-  return startState === "expanded" ? "compact" : "minimized";
 }
 
 function sheetStateFromTap(target) {
@@ -2561,12 +3337,24 @@ function beginSheetDrag(event) {
     pointerId: event.pointerId,
     startY: event.clientY,
     lastY: event.clientY,
+    lastTime: performance.now(),
+    velocityY: 0,
     startedAt: performance.now(),
     startState: state.inspectorState,
+    startHeight: bottomInspector.getBoundingClientRect().height,
+    currentHeight: bottomInspector.getBoundingClientRect().height,
+    minHeight: inspectorSnapHeight("minimized"),
+    maxHeight: inspectorSnapHeight("expanded"),
     target: event.currentTarget,
     moved: false
   };
+  if (sheetSettleTimer) {
+    window.clearTimeout(sheetSettleTimer);
+    sheetSettleTimer = null;
+  }
   bottomInspector.classList.add("is-dragging");
+  bottomInspector.style.height = `${sheetDrag.startHeight}px`;
+  bottomInspector.style.maxHeight = `${sheetDrag.startHeight}px`;
   event.currentTarget.setPointerCapture?.(event.pointerId);
   event.preventDefault();
   event.stopPropagation();
@@ -2577,8 +3365,20 @@ function updateSheetDrag(event) {
     return;
   }
 
+  const now = performance.now();
+  const elapsedSinceLastMove = Math.max(1, now - sheetDrag.lastTime);
+  const deltaSinceLastMove = event.clientY - sheetDrag.lastY;
+  const deltaY = event.clientY - sheetDrag.startY;
+  const nextHeight = clamp(sheetDrag.startHeight - deltaY, sheetDrag.minHeight, sheetDrag.maxHeight);
+
+  sheetDrag.velocityY = deltaSinceLastMove / elapsedSinceLastMove;
   sheetDrag.lastY = event.clientY;
-  if (Math.abs(sheetDrag.lastY - sheetDrag.startY) > 6) {
+  sheetDrag.lastTime = now;
+  sheetDrag.currentHeight = nextHeight;
+  bottomInspector.style.height = `${nextHeight}px`;
+  bottomInspector.style.maxHeight = `${nextHeight}px`;
+
+  if (Math.abs(deltaY) > 6) {
     sheetDrag.moved = true;
   }
   event.preventDefault();
@@ -2592,11 +3392,10 @@ function finishSheetDrag(event) {
 
   sheetDrag.lastY = event.clientY;
   const deltaY = sheetDrag.lastY - sheetDrag.startY;
-  const elapsedMs = performance.now() - sheetDrag.startedAt;
-  const startState = sheetDrag.startState;
   const target = sheetDrag.target;
+  const releaseHeight = clamp(sheetDrag.startHeight - deltaY, sheetDrag.minHeight, sheetDrag.maxHeight);
   const nextState = sheetDrag.moved
-    ? sheetStateFromSwipe(startState, deltaY, elapsedMs)
+    ? inspectorStateFromDrag(sheetDrag.startState, releaseHeight, sheetDrag.velocityY)
     : sheetStateFromTap(target);
 
   target.releasePointerCapture?.(event.pointerId);
@@ -2607,7 +3406,7 @@ function finishSheetDrag(event) {
   event.stopPropagation();
 
   if (nextState) {
-    setInspectorState(nextState);
+    setInspectorState(nextState, { fromHeight: releaseHeight });
   }
 }
 
@@ -2617,17 +3416,17 @@ function cancelSheetDrag(event) {
   }
 
   const deltaY = sheetDrag.lastY - sheetDrag.startY;
-  const elapsedMs = performance.now() - sheetDrag.startedAt;
+  const releaseHeight = clamp(sheetDrag.startHeight - deltaY, sheetDrag.minHeight, sheetDrag.maxHeight);
   const nextState = sheetDrag.moved
-    ? sheetStateFromSwipe(sheetDrag.startState, deltaY, elapsedMs)
-    : null;
+    ? inspectorStateFromDrag(sheetDrag.startState, releaseHeight, sheetDrag.velocityY)
+    : sheetDrag.startState;
 
   sheetDrag.target.releasePointerCapture?.(event.pointerId);
   sheetDrag = null;
   bottomInspector.classList.remove("is-dragging");
 
   if (nextState) {
-    setInspectorState(nextState);
+    setInspectorState(nextState, { fromHeight: releaseHeight });
   }
 }
 
@@ -2728,6 +3527,16 @@ shrinkageInput.addEventListener("input", () => {
 });
 
 arQuickLookLink.addEventListener("click", prepareArQuickLookLink);
+projectMenuButton.addEventListener("click", () => openProjectSheet("saved"));
+projectCloseButton.addEventListener("click", closeProjectSheet);
+projectBackButton.addEventListener("click", () => {
+  setProjectView("saved");
+});
+projectOverlay.addEventListener("click", (event) => {
+  if (event.target === projectOverlay) {
+    closeProjectSheet();
+  }
+});
 
 window.addEventListener("pagehide", persistDesignNow);
 

@@ -4,17 +4,18 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>ClayForm Designer</title>
-    <link rel="stylesheet" href="styles.css?v=20260623-ar-phase-1">
+  <link rel="stylesheet" href="styles.css?v=20260628-sticky-sheet-head-3">
   </head>
   <body>
     <main class="app-shell" aria-label="ClayForm pottery profile designer">
       <header class="topbar">
-        <div>
-          <p class="eyebrow">ClayForm</p>
-          <h1>Small vase</h1>
+        <div class="project-title" aria-label="Current pot">
+          <span class="eyebrow">ClayForm</span>
+          <strong id="potTitle">Small vase</strong>
+          <span id="saveStatus" class="save-status">Saved</span>
         </div>
         <div class="top-actions" aria-label="Document actions">
-          <button class="icon-button dark" type="button" aria-label="Save">S</button>
+          <button id="projectMenuButton" class="icon-button dark project-button" type="button" aria-label="Open My Pots">My Pots</button>
           <a id="arQuickLookLink" class="icon-button dark ar-button" rel="ar" href="#" download="clayform-pot.usdz" aria-label="View actual size in augmented reality">
             <span>AR</span>
           </a>
@@ -33,9 +34,16 @@
       </section>
 
       <section id="bottomInspector" class="bottom-inspector" aria-label="Editing controls">
-        <button id="inspectorToggle" class="sheet-toggle" type="button" aria-expanded="true" aria-label="Minimize controls">
-          <span aria-hidden="true"></span>
-        </button>
+        <div class="inspector-sticky-head">
+          <button id="inspectorToggle" class="sheet-toggle" type="button" aria-expanded="true" aria-label="Minimize controls">
+            <span aria-hidden="true"></span>
+          </button>
+
+          <div class="inspector-summary" aria-label="Current selection">
+            <span id="selectedMeta">Outer point</span>
+            <strong id="selectedLabel">Belly point</strong>
+          </div>
+        </div>
 
         <div class="compact-inspector" aria-label="Collapsed editing controls">
           <button id="compactSelectedButton" class="compact-selected" type="button" aria-label="Expand controls">
@@ -52,11 +60,6 @@
               <button type="button" data-compact-kind="segment">Line</button>
             </div>
           </div>
-        </div>
-
-        <div class="inspector-summary" aria-label="Current selection">
-          <span id="selectedMeta">Outer point</span>
-          <strong id="selectedLabel">Belly point</strong>
         </div>
 
         <section class="panel section-panel" aria-labelledby="sectionTitle">
@@ -120,6 +123,20 @@
       </label>
     </template>
 
-    <script src="app.js?v=20260623-ar-phase-1" defer></script>
+    <div id="projectOverlay" class="project-overlay" hidden>
+      <section class="project-sheet" role="dialog" aria-modal="true" aria-labelledby="projectSheetTitle">
+        <header class="project-sheet-header">
+          <button id="projectBackButton" class="sheet-action" type="button" aria-label="Back" hidden>Back</button>
+          <div>
+            <p id="projectSheetEyebrow" class="eyebrow">Library</p>
+            <h2 id="projectSheetTitle">My Pots</h2>
+          </div>
+          <button id="projectCloseButton" class="sheet-action" type="button" aria-label="Close">Close</button>
+        </header>
+        <div id="projectSheetBody" class="project-sheet-body"></div>
+      </section>
+    </div>
+
+  <script src="app.js?v=20260628-sticky-sheet-head-3" defer></script>
   </body>
 </html>
