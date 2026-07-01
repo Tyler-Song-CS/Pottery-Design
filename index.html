@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>ClayForm Designer</title>
-  <link rel="stylesheet" href="styles.css?v=20260628-sticky-sheet-head-3">
+  <link rel="stylesheet" href="styles.css?v=20260701-floor-foot-link-1">
   </head>
   <body>
     <main class="app-shell" aria-label="ClayForm pottery profile designer">
@@ -16,7 +16,7 @@
         </div>
         <div class="top-actions" aria-label="Document actions">
           <button id="projectMenuButton" class="icon-button dark project-button" type="button" aria-label="Open My Pots">My Pots</button>
-          <a id="arQuickLookLink" class="icon-button dark ar-button" rel="ar" href="#" download="clayform-pot.usdz" aria-label="View actual size in augmented reality">
+          <a id="arQuickLookLink" class="icon-button dark ar-button" rel="ar" href="#" download="clayform-pot-finished.usdz" aria-label="View actual size in augmented reality">
             <span>AR</span>
           </a>
         </div>
@@ -25,9 +25,12 @@
       <section class="canvas-card" aria-labelledby="canvasTitle">
         <div class="canvas-header">
           <h2 id="canvasTitle">Profile</h2>
-          <div class="legend" aria-label="Line legend">
-            <span><i class="legend-dot outer-dot"></i>Outer</span>
-            <span><i class="legend-dot inner-dot"></i>Inner</span>
+          <div class="canvas-meta">
+            <span id="sizeBasisBadge" class="basis-badge" aria-live="polite">Finished size</span>
+            <div class="legend" aria-label="Line legend">
+              <span><i class="legend-dot outer-dot"></i>Outer</span>
+              <span><i class="legend-dot inner-dot"></i>Inner</span>
+            </div>
           </div>
         </div>
         <svg id="profileCanvas" class="profile-canvas" viewBox="0 0 588 640" role="img" aria-label="Editable pottery section drawing"></svg>
@@ -137,6 +140,6 @@
       </section>
     </div>
 
-  <script src="app.js?v=20260628-sticky-sheet-head-3" defer></script>
+  <script src="app.js?v=20260701-floor-foot-link-1" defer></script>
   </body>
 </html>

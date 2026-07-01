@@ -9,6 +9,7 @@ const clayEstimateValue = document.querySelector("#clayEstimateValue");
 const shrinkageInput = document.querySelector("#shrinkageInput");
 const finishedBasis = document.querySelector("#finishedBasis");
 const wetBasis = document.querySelector("#wetBasis");
+const sizeBasisBadge = document.querySelector("#sizeBasisBadge");
 const uniformWallToggle = document.querySelector("#uniformWallToggle");
 const uniformWallControl = document.querySelector("#uniformWallControl");
 const outerLineButton = document.querySelector("#outerLineButton");
@@ -40,6 +41,9 @@ const baseViewBox = {
   width: 588,
   height: 720
 };
+const minimumProfileClearance = 0.08;
+const collisionCurveTolerance = minimumProfileClearance * 0.08;
+const collisionMaxSubdivisionDepth = 10;
 
 const canvasView = { ...baseViewBox };
 const activePointers = new Map();
@@ -560,7 +564,7 @@ function arScale(value) {
   return activeSize(value) * 0.0254;
 }
 
-function sampleProfileForAr(line, points) {
+function sampleProfileForAr(line, points, sampleSteps = 10) {
   const samples = [];
 
   points.slice(0, -1).forEach((point, index) => {
@@ -578,8 +582,8 @@ function sampleProfileForAr(line, points) {
     }
 
     const control = ensureCurveControlForLine(line, segmentId, point, nextPoint);
-    for (let step = 1; step <= 10; step += 1) {
-      const t = step / 10;
+    for (let step = 1; step <= sampleSteps; step += 1) {
+      const t = step / sampleSteps;
       samples.push(quadraticPoint(point, control, nextPoint, t));
     }
   });
@@ -596,6 +600,325 @@ function compactArProfile(points) {
     const previous = points[index - 1];
     return Math.hypot(point.radius - previous.radius, point.height - previous.height) > 0.002;
   });
+}
+
+function profileRadiusAtHeight(line, points, height, fallbackToNearest = true) {
+  if (!Array.isArray(points) || points.length === 0) {
+    return null;
+  }
+
+  const samples = sampleProfileForAr(line, points);
+  const hits = [];
+
+  for (let index = 1; index < samples.length; index += 1) {
+    const first = samples[index - 1];
+    const second = samples[index];
+    const minHeight = Math.min(first.height, second.height);
+    const maxHeight = Math.max(first.height, second.height);
+
+    if (height < minHeight - 0.001 || height > maxHeight + 0.001) {
+      continue;
+    }
+
+    const heightRange = second.height - first.height;
+    if (Math.abs(heightRange) < 0.001) {
+      hits.push(Math.max(first.radius, second.radius));
+      continue;
+    }
+
+    const ratio = clamp((height - first.height) / heightRange, 0, 1);
+    hits.push(first.radius + (second.radius - first.radius) * ratio);
+  }
+
+  if (hits.length > 0) {
+    return Math.max(...hits);
+  }
+
+  if (!fallbackToNearest || samples.length === 0) {
+    return null;
+  }
+
+  return samples.reduce((nearest, sample) => (
+    Math.abs(sample.height - height) < Math.abs(nearest.height - height) ? sample : nearest
+  ), samples[0]).radius;
+}
+
+function outerRadiusAtHeight(height) {
+  return profileRadiusAtHeight("outer", state.outerPoints, height, true) || 0.25;
+}
+
+function customInnerRadiusAtHeight(height) {
+  if (state.uniformWall || state.innerPoints.length < 2) {
+    return null;
+  }
+
+  return profileRadiusAtHeight("inner", state.innerPoints, height, false);
+}
+
+function maxInnerRadiusAtHeight(height) {
+  return Math.max(0.12, outerRadiusAtHeight(height) - minimumProfileClearance);
+}
+
+function minOuterRadiusAtHeight(height) {
+  const innerRadius = customInnerRadiusAtHeight(height);
+  return innerRadius === null ? 0.25 : Math.min(4, innerRadius + minimumProfileClearance);
+}
+
+function constrainInnerRadiusAtHeight(radius, height) {
+  return clamp(radius, 0.12, maxInnerRadiusAtHeight(height));
+}
+
+function constrainOuterRadiusAtHeight(radius, height) {
+  return clamp(radius, minOuterRadiusAtHeight(height), 4);
+}
+
+function profilePointBetween(first, second) {
+  return {
+    radius: (first.radius + second.radius) / 2,
+    height: (first.height + second.height) / 2
+  };
+}
+
+function pointDistance(first, second) {
+  return Math.hypot(first.radius - second.radius, first.height - second.height);
+}
+
+function segmentOrientation(first, second, third) {
+  const value = (second.radius - first.radius) * (third.height - first.height)
+    - (second.height - first.height) * (third.radius - first.radius);
+
+  if (Math.abs(value) < 0.0001) {
+    return 0;
+  }
+
+  return value > 0 ? 1 : -1;
+}
+
+function pointOnSegment(point, first, second) {
+  return point.radius >= Math.min(first.radius, second.radius) - 0.0001
+    && point.radius <= Math.max(first.radius, second.radius) + 0.0001
+    && point.height >= Math.min(first.height, second.height) - 0.0001
+    && point.height <= Math.max(first.height, second.height) + 0.0001;
+}
+
+function profileSegmentsIntersect(firstStart, firstEnd, secondStart, secondEnd) {
+  const firstOrientation = segmentOrientation(firstStart, firstEnd, secondStart);
+  const secondOrientation = segmentOrientation(firstStart, firstEnd, secondEnd);
+  const thirdOrientation = segmentOrientation(secondStart, secondEnd, firstStart);
+  const fourthOrientation = segmentOrientation(secondStart, secondEnd, firstEnd);
+
+  if (firstOrientation === 0 && pointOnSegment(secondStart, firstStart, firstEnd)) {
+    return true;
+  }
+
+  if (secondOrientation === 0 && pointOnSegment(secondEnd, firstStart, firstEnd)) {
+    return true;
+  }
+
+  if (thirdOrientation === 0 && pointOnSegment(firstStart, secondStart, secondEnd)) {
+    return true;
+  }
+
+  if (fourthOrientation === 0 && pointOnSegment(firstEnd, secondStart, secondEnd)) {
+    return true;
+  }
+
+  return firstOrientation !== secondOrientation && thirdOrientation !== fourthOrientation;
+}
+
+function pointToSegmentDistance(point, start, end) {
+  const deltaRadius = end.radius - start.radius;
+  const deltaHeight = end.height - start.height;
+  const lengthSquared = deltaRadius * deltaRadius + deltaHeight * deltaHeight;
+
+  if (lengthSquared < 0.000001) {
+    return pointDistance(point, start);
+  }
+
+  const ratio = clamp(
+    ((point.radius - start.radius) * deltaRadius + (point.height - start.height) * deltaHeight) / lengthSquared,
+    0,
+    1
+  );
+  const projection = {
+    radius: start.radius + deltaRadius * ratio,
+    height: start.height + deltaHeight * ratio
+  };
+
+  return pointDistance(point, projection);
+}
+
+function profileSegmentBox(start, end) {
+  return {
+    minRadius: Math.min(start.radius, end.radius),
+    maxRadius: Math.max(start.radius, end.radius),
+    minHeight: Math.min(start.height, end.height),
+    maxHeight: Math.max(start.height, end.height)
+  };
+}
+
+function profileSegmentBoxesCanViolate(first, second, padding) {
+  return first.box.maxRadius + padding >= second.box.minRadius
+    && second.box.maxRadius + padding >= first.box.minRadius
+    && first.box.maxHeight + padding >= second.box.minHeight
+    && second.box.maxHeight + padding >= first.box.minHeight;
+}
+
+function addCollisionSegment(segments, segmentId, start, end) {
+  if (pointDistance(start, end) < 0.0005) {
+    return;
+  }
+
+  const safeStart = { radius: start.radius, height: start.height };
+  const safeEnd = { radius: end.radius, height: end.height };
+
+  segments.push({
+    segmentId,
+    start: safeStart,
+    end: safeEnd,
+    box: profileSegmentBox(safeStart, safeEnd)
+  });
+}
+
+function addQuadraticCollisionSegments(segments, segmentId, first, control, second, depth = 0) {
+  const flatness = pointToSegmentDistance(control, first, second);
+
+  if (depth >= collisionMaxSubdivisionDepth || flatness <= collisionCurveTolerance) {
+    addCollisionSegment(segments, segmentId, first, second);
+    return;
+  }
+
+  const firstControl = profilePointBetween(first, control);
+  const secondControl = profilePointBetween(control, second);
+  const midpoint = profilePointBetween(firstControl, secondControl);
+
+  addQuadraticCollisionSegments(segments, segmentId, first, firstControl, midpoint, depth + 1);
+  addQuadraticCollisionSegments(segments, segmentId, midpoint, secondControl, second, depth + 1);
+}
+
+function profileCollisionSegments(line, points) {
+  const segments = [];
+
+  points.slice(0, -1).forEach((point, index) => {
+    const nextPoint = points[index + 1];
+    const segmentId = segmentKey(point.id, nextPoint.id);
+    const style = styleForLineSegment(line, point.id, nextPoint.id);
+
+    if (style !== "curve") {
+      addCollisionSegment(segments, segmentId, point, nextPoint);
+      return;
+    }
+
+    addQuadraticCollisionSegments(
+      segments,
+      segmentId,
+      point,
+      ensureCurveControlForLine(line, segmentId, point, nextPoint),
+      nextPoint
+    );
+  });
+
+  return segments;
+}
+
+function segmentDistance(firstStart, firstEnd, secondStart, secondEnd) {
+  if (profileSegmentsIntersect(firstStart, firstEnd, secondStart, secondEnd)) {
+    return 0;
+  }
+
+  return Math.min(
+    pointToSegmentDistance(firstStart, secondStart, secondEnd),
+    pointToSegmentDistance(firstEnd, secondStart, secondEnd),
+    pointToSegmentDistance(secondStart, firstStart, firstEnd),
+    pointToSegmentDistance(secondEnd, firstStart, firstEnd)
+  );
+}
+
+function profileSeparationStatus() {
+  const outer = profileCollisionSegments("outer", state.outerPoints);
+  const inner = profileCollisionSegments("inner", innerProfilePoints());
+  const minimumSampledClearance = minimumProfileClearance * 0.5;
+  let minimumDistance = Infinity;
+  const violationKeys = new Set();
+
+  if (outer.length === 0 || inner.length === 0) {
+    return { valid: true, minimumDistance, violations: 0, violationKeys: [] };
+  }
+
+  outer.forEach((outerSegment) => {
+    inner.forEach((innerSegment) => {
+      if (!profileSegmentBoxesCanViolate(outerSegment, innerSegment, minimumSampledClearance)) {
+        return;
+      }
+
+      const distance = segmentDistance(
+        outerSegment.start,
+        outerSegment.end,
+        innerSegment.start,
+        innerSegment.end
+      );
+      minimumDistance = Math.min(minimumDistance, distance);
+
+      if (distance < minimumSampledClearance) {
+        violationKeys.add(`${outerSegment.segmentId}|${innerSegment.segmentId}`);
+      }
+    });
+  });
+
+  const violations = violationKeys.size;
+
+  return {
+    valid: violations === 0,
+    minimumDistance,
+    violations,
+    violationKeys: [...violationKeys].sort()
+  };
+}
+
+function hasNewProfileViolation(before, after) {
+  const beforeKeys = new Set(before.violationKeys || []);
+  return (after.violationKeys || []).some((key) => !beforeKeys.has(key));
+}
+
+function invalidProfileSeparationImproved(before, after) {
+  if (before.valid || after.valid || hasNewProfileViolation(before, after)) {
+    return false;
+  }
+
+  if (after.violations < before.violations) {
+    return true;
+  }
+
+  return after.violations === before.violations
+    && after.minimumDistance > before.minimumDistance + 0.001;
+}
+
+function profileGuardSnapshot() {
+  return persistedStateSnapshot();
+}
+
+function restoreProfileGuardSnapshot(snapshot) {
+  applyStateSnapshot(snapshot);
+  normalizeState();
+}
+
+function applyGuardedProfileEdit(edit) {
+  normalizeState();
+  const snapshot = profileGuardSnapshot();
+  const before = profileSeparationStatus();
+
+  edit();
+  normalizeState();
+
+  const after = profileSeparationStatus();
+  const improvedInvalidShape = invalidProfileSeparationImproved(before, after);
+
+  if (!after.valid && (before.valid || !improvedInvalidShape)) {
+    restoreProfileGuardSnapshot(snapshot);
+    return false;
+  }
+
+  return true;
 }
 
 function arProfileLoop() {
@@ -840,6 +1163,20 @@ function buildUsdzBlob() {
   return new Blob([archive], { type: "model/vnd.usdz+zip" });
 }
 
+function fileNameSlug(value, fallback = "pot") {
+  const slug = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return slug || fallback;
+}
+
+function arDownloadFileName() {
+  return `clayform-${fileNameSlug(currentPotTitle)}-${fileNameSlug(state.basis, "finished")}.usdz`;
+}
+
 function prepareArQuickLookLink(event) {
   try {
     const blob = buildUsdzBlob();
@@ -848,7 +1185,7 @@ function prepareArQuickLookLink(event) {
     }
     arModelUrl = URL.createObjectURL(blob);
     arQuickLookLink.href = arModelUrl;
-    arQuickLookLink.download = `clayform-pot-${state.basis}-actual-size.usdz`;
+    arQuickLookLink.download = arDownloadFileName();
   } catch (error) {
     event.preventDefault();
     console.error("Unable to create AR model", error);
@@ -862,6 +1199,11 @@ function isOuterOnlyPoint(pointOrId) {
 
 function isOuterOnlySegment(first, second) {
   return isOuterOnlyPoint(first) || isOuterOnlyPoint(second);
+}
+
+function isInteriorFloorPoint(pointOrId) {
+  const id = typeof pointOrId === "string" ? pointOrId : pointOrId?.id;
+  return id === "floor" || pointOrId?.fixed === "floor";
 }
 
 function footReferencePoint() {
@@ -1100,16 +1442,139 @@ function applyPointJointsTouchingPoint(line, pointId) {
   });
 }
 
+function pointHeightBounds(points, pointId, minHeight = 0, maxHeight = 10) {
+  const index = pointIndex(points, pointId);
+
+  if (index < 0) {
+    return { min: minHeight, max: maxHeight };
+  }
+
+  const pointAbove = points[index - 1];
+  const pointBelow = points[index + 1];
+  const min = clamp(pointBelow ? pointBelow.height : minHeight, minHeight, maxHeight);
+  const max = clamp(pointAbove ? pointAbove.height : maxHeight, minHeight, maxHeight);
+
+  if (min <= max) {
+    return { min, max };
+  }
+
+  const sharedHeight = clamp((min + max) / 2, minHeight, maxHeight);
+  return { min: sharedHeight, max: sharedHeight };
+}
+
+function mergeHeightBounds(first, second) {
+  const min = Math.max(first.min, second.min);
+  const max = Math.min(first.max, second.max);
+
+  if (min <= max) {
+    return { min, max };
+  }
+
+  const sharedHeight = (min + max) / 2;
+  return { min: sharedHeight, max: sharedHeight };
+}
+
+function linkedFloorHeightBounds() {
+  const footPoint = footReferencePoint();
+
+  if (!footPoint || footPoint.fixed === "base") {
+    return { min: 0.15, max: Math.max(0.15, maxOuterHeight()) };
+  }
+
+  return pointHeightBounds(state.outerPoints, footPoint.id, 0.15, 10);
+}
+
+function linkedFloorHeight() {
+  const footPoint = footReferencePoint();
+  const bounds = linkedFloorHeightBounds();
+  return clamp(footPoint?.height ?? state.floorThickness, bounds.min, bounds.max);
+}
+
+function setLinkedFloorHeight(height, floorPoint = null) {
+  const footPoint = footReferencePoint();
+  const bounds = linkedFloorHeightBounds();
+  const nextHeight = clamp(height, bounds.min, bounds.max);
+
+  if (footPoint && footPoint.fixed !== "base") {
+    footPoint.height = nextHeight;
+  }
+
+  if (floorPoint) {
+    floorPoint.height = nextHeight;
+  }
+
+  state.floorThickness = nextHeight;
+  return nextHeight;
+}
+
+function syncCustomInteriorFloorToFoot() {
+  const floorPoint = state.innerPoints.find(isInteriorFloorPoint);
+
+  if (!floorPoint) {
+    return;
+  }
+
+  const height = linkedFloorHeight();
+  floorPoint.height = height;
+  floorPoint.radius = constrainInnerRadiusAtHeight(floorPoint.radius, height);
+}
+
+function isLinkedFloorHeightControl(line, point) {
+  return (line === "outer" && point?.id === footReferencePoint()?.id)
+    || (line === "inner" && isInteriorFloorPoint(point));
+}
+
+function selectedPointHeightBounds(line, points, point) {
+  const pointBounds = pointHeightBounds(
+    points,
+    point.id,
+    line === "inner" || isLinkedFloorHeightControl(line, point) ? 0.15 : 0,
+    line === "inner" ? Math.max(0.15, maxOuterHeight()) : 10
+  );
+
+  if (!isLinkedFloorHeightControl(line, point)) {
+    return pointBounds;
+  }
+
+  return mergeHeightBounds(pointBounds, linkedFloorHeightBounds());
+}
+
+function normalizeProfilePointOrder(points, minHeight = 0, maxHeight = 10) {
+  points.forEach((point) => {
+    point.height = point.fixed === "base" ? 0 : clamp(point.height, minHeight, maxHeight);
+  });
+
+  for (let index = 1; index < points.length; index += 1) {
+    const point = points[index];
+
+    point.height = point.fixed === "base"
+      ? 0
+      : Math.min(point.height, points[index - 1].height);
+  }
+
+  for (let index = points.length - 2; index >= 0; index -= 1) {
+    const point = points[index];
+
+    if (point.fixed !== "base") {
+      point.height = Math.max(point.height, points[index + 1].height);
+    }
+  }
+}
+
 function normalizeOuterPoints() {
   state.outerPoints.forEach((point) => {
     point.radius = clamp(point.radius, 0.25, 4);
+    point.height = point.fixed === "base" ? 0 : clamp(point.height, 0, 10);
+  });
 
-    if (point.fixed === "base") {
-      point.height = 0;
-      return;
+  normalizeProfilePointOrder(state.outerPoints, 0, 10);
+  setLinkedFloorHeight(footReferencePoint()?.height ?? state.floorThickness);
+  normalizeProfilePointOrder(state.outerPoints, 0, 10);
+
+  state.outerPoints.forEach((point) => {
+    if (state.editingLine === "outer") {
+      point.radius = constrainOuterRadiusAtHeight(point.radius, point.height);
     }
-
-    point.height = clamp(point.height, 0, 10);
   });
 }
 
@@ -1292,7 +1757,7 @@ function uniformOffsetForPoint(point, index, fallbackPoint) {
 
 function derivedInnerPoints() {
   normalizeOuterPoints();
-  const floorHeight = clamp(state.floorThickness, 0.15, Math.max(0.15, maxOuterHeight() - 0.5));
+  const floorHeight = linkedFloorHeight();
   const points = [];
 
   state.outerPoints.forEach((point, index) => {
@@ -1302,11 +1767,12 @@ function derivedInnerPoints() {
 
     const radialPoint = radialInnerPointFromOuter(point);
     const offset = uniformOffsetForPoint(point, index, radialPoint);
+    const height = clamp(offset.height, 0.15, maxOuterHeight());
 
     points.push({
       ...radialPoint,
-      height: clamp(offset.height, 0.15, maxOuterHeight()),
-      radius: Math.max(0.12, offset.radius)
+      height,
+      radius: constrainInnerRadiusAtHeight(offset.radius, height)
     });
   });
 
@@ -1325,13 +1791,19 @@ function derivedInnerPoints() {
     : footPoint
       ? Math.max(0.12, footPoint.radius - state.wallThickness)
       : Math.max(0.12, state.outerPoints[0].radius - state.wallThickness);
+  const constrainedFloorRadius = constrainInnerRadiusAtHeight(floorRadius, floorHeight);
 
   points.push({
     id: "floor",
     label: "Interior floor",
     height: floorHeight,
-    radius: floorRadius,
+    radius: constrainedFloorRadius,
     fixed: "floor"
+  });
+
+  normalizeProfilePointOrder(points, 0.15, maxOuterHeight());
+  points.forEach((point) => {
+    point.radius = constrainInnerRadiusAtHeight(point.radius, point.height);
   });
 
   return points;
@@ -1392,18 +1864,22 @@ function normalizeInnerPoints() {
     return !isOuterOnlyPoint(point) && !isOuterOnlyPoint(outer);
   });
 
-  state.innerPoints.forEach((point) => {
-    const outer = outerById.get(point.id);
-    const maxRadius = outer ? outer.radius - 0.08 : footReferencePoint().radius - 0.08;
-    const maxHeight = Math.max(0.15, maxOuterHeight());
-    point.radius = clamp(point.radius, 0.12, Math.max(0.14, maxRadius));
+  const maxHeight = Math.max(0.15, maxOuterHeight());
 
+  state.innerPoints.forEach((point) => {
     if (point.fixed === "floor" || point.id === "floor") {
-      point.height = clamp(point.height, 0.15, Math.max(0.15, maxHeight - 0.5));
+      point.height = linkedFloorHeight();
       return;
     }
 
     point.height = clamp(point.height, 0.15, maxHeight);
+  });
+
+  syncCustomInteriorFloorToFoot();
+  normalizeProfilePointOrder(state.innerPoints, 0.15, maxHeight);
+
+  state.innerPoints.forEach((point) => {
+    point.radius = constrainInnerRadiusAtHeight(point.radius, point.height);
   });
 }
 
@@ -1416,12 +1892,19 @@ function normalizeSegmentCurves() {
       return;
     }
 
-    control.radius = clamp(control.radius, 0.12, 4);
     control.height = clamp(
       control.height,
       Math.min(first.height, second.height),
       Math.max(first.height, second.height)
     );
+    if (line === "inner") {
+      control.radius = constrainInnerRadiusAtHeight(control.radius, control.height);
+      return;
+    }
+
+    control.radius = state.editingLine === "outer"
+      ? constrainOuterRadiusAtHeight(control.radius, control.height)
+      : clamp(control.radius, 0.12, 4);
   });
 }
 
@@ -1729,7 +2212,7 @@ function innerControlFromOuter(segmentId, outerControl) {
 
     return {
       height: outerControl.height,
-      radius: Math.max(0.12, outerControl.radius - offset)
+      radius: constrainInnerRadiusAtHeight(outerControl.radius - offset, outerControl.height)
     };
   }
 
@@ -1739,13 +2222,15 @@ function innerControlFromOuter(segmentId, outerControl) {
   const innerMidpoint = offsetPoint(midpoint, normal, state.wallThickness);
   const control = controlPointFromQuadraticMidpoint(innerFirst, innerMidpoint, innerSecond);
 
+  const constrainedHeight = clamp(
+    control.height,
+    Math.min(innerFirst.height, innerSecond.height),
+    Math.max(innerFirst.height, innerSecond.height)
+  );
+
   return {
-    height: clamp(
-      control.height,
-      Math.min(innerFirst.height, innerSecond.height),
-      Math.max(innerFirst.height, innerSecond.height)
-    ),
-    radius: Math.max(0.12, control.radius)
+    height: constrainedHeight,
+    radius: constrainInnerRadiusAtHeight(control.radius, constrainedHeight)
   };
 }
 
@@ -2080,8 +2565,15 @@ function makeRangeControl(definition, target = controlsRoot) {
       return;
     }
 
-    definition.set(snapToStep(value, Number(definition.step)));
-    normalizeState();
+    const accepted = applyGuardedProfileEdit(() => {
+      definition.set(snapToStep(value, Number(definition.step)));
+    });
+
+    if (!accepted) {
+      render({ controls: true });
+      return;
+    }
+
     input.value = definition.get();
     output.value = formatControlValue(definition.get(), definition.mode);
     render({ controls: refreshControls });
@@ -2172,6 +2664,9 @@ function renderWallGroup(extraControls = []) {
 function selectedPointControls() {
   const point = selectedPoint();
   const innerUniformLocked = state.editingLine === "inner" && state.uniformWall;
+  const points = activeLinePoints();
+  const usesLinkedFloorHeight = isLinkedFloorHeightControl(state.editingLine, point);
+  const heightBounds = selectedPointHeightBounds(state.editingLine, points, point);
   const controls = [
     {
       label: "Diameter",
@@ -2189,13 +2684,18 @@ function selectedPointControls() {
   if (point.fixed !== "base") {
     controls.push({
       label: "Height",
-      min: 0,
-      max: 10,
+      min: heightBounds.min,
+      max: heightBounds.max,
       step: 0.05,
       disabled: innerUniformLocked,
-      get: () => point.height,
+      get: () => usesLinkedFloorHeight ? linkedFloorHeight() : point.height,
       set: (value) => {
-        point.height = value;
+        if (usesLinkedFloorHeight) {
+          setLinkedFloorHeight(value, isInteriorFloorPoint(point) ? point : null);
+          return;
+        }
+
+        point.height = clamp(value, heightBounds.min, heightBounds.max);
       }
     });
   }
@@ -2232,7 +2732,9 @@ function renderSegmentControls(target = controlsRoot) {
   wrapper.querySelectorAll("button").forEach((button) => {
     button.classList.toggle("active", button.dataset.style === style);
     button.addEventListener("click", () => {
-      setSegmentStyle(state.selectedSegmentId, button.dataset.style);
+      applyGuardedProfileEdit(() => {
+        setSegmentStyle(state.selectedSegmentId, button.dataset.style);
+      });
       render();
     });
   });
@@ -2316,6 +2818,8 @@ function renderChrome() {
   const estimate = estimateClay();
   potTitle.textContent = currentPotTitle;
   document.title = `${currentPotTitle} - ClayForm Designer`;
+  arQuickLookLink.download = arDownloadFileName();
+  sizeBasisBadge.textContent = state.basis === "wet" ? "Wet size" : "Finished size";
   clayEstimateValue.textContent = `${estimate.pounds.toFixed(1)} lb`;
   clayEstimate.setAttribute(
     "aria-label",
@@ -2402,31 +2906,126 @@ function formatUpdatedDate(value) {
   });
 }
 
-function thumbnailPath(points) {
-  const safePoints = points.length >= 2 ? points : starterStateSnapshot.outerPoints;
-  const maxHeight = Math.max(...safePoints.map((point) => Number(point.height) || 0), 1);
-  const maxRadius = Math.max(...safePoints.map((point) => Number(point.radius) || 0), 1);
+function finiteThumbnailValue(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function thumbnailSnapshot(source) {
+  if (Array.isArray(source)) {
+    return {
+      outerPoints: source,
+      segmentStyles: {},
+      segmentCurves: {}
+    };
+  }
+
+  if (isRecord(source) && Array.isArray(source.outerPoints)) {
+    return source;
+  }
+
+  return starterStateSnapshot;
+}
+
+function thumbnailStyleForSegment(snapshot, firstId, secondId) {
+  const styles = isRecord(snapshot.segmentStyles) ? snapshot.segmentStyles : {};
+  const style = styles[segmentKey(firstId, secondId)]
+    || styles[segmentKey(secondId, firstId)]
+    || "curve";
+
+  if (style === "smooth") {
+    return "curve";
+  }
+
+  if (style === "corner") {
+    return "straight";
+  }
+
+  return style;
+}
+
+function thumbnailCurveControl(snapshot, segmentId, first, second) {
+  const curves = isRecord(snapshot.segmentCurves) ? snapshot.segmentCurves : {};
+  const reverseId = reverseSegmentKey(segmentId);
+  const fallback = segmentControlFromPoints(first, second);
+  const control = curves[curveStorageKey("outer", segmentId)]
+    || curves[curveStorageKey("outer", reverseId)]
+    || curves[segmentId]
+    || curves[reverseId]
+    || fallback;
+
+  return {
+    height: finiteThumbnailValue(control.height, fallback.height),
+    radius: finiteThumbnailValue(control.radius, fallback.radius)
+  };
+}
+
+function thumbnailGeometry(snapshot) {
+  const safePoints = snapshot.outerPoints.length >= 2 ? snapshot.outerPoints : starterStateSnapshot.outerPoints;
+  const curveControls = safePoints.slice(0, -1).map((point, index) => {
+    const nextPoint = safePoints[index + 1];
+    const segmentId = segmentKey(point.id, nextPoint.id);
+
+    if (thumbnailStyleForSegment(snapshot, point.id, nextPoint.id) !== "curve") {
+      return null;
+    }
+
+    return thumbnailCurveControl(snapshot, segmentId, point, nextPoint);
+  }).filter(Boolean);
+  const extentPoints = [...safePoints, ...curveControls];
+  const maxHeight = Math.max(...extentPoints.map((point) => finiteThumbnailValue(point.height, 0)), 1);
+  const maxRadius = Math.max(...extentPoints.map((point) => finiteThumbnailValue(point.radius, 0)), 1);
   const centerX = 29;
   const bottomY = 56;
   const scale = Math.min(24 / maxRadius, 52 / maxHeight);
-  const right = safePoints.map((point) => ({
-    x: centerX + point.radius * scale,
-    y: bottomY - point.height * scale
-  }));
-  const left = safePoints.toReversed
-    ? safePoints.toReversed().map((point) => ({
-      x: centerX - point.radius * scale,
-      y: bottomY - point.height * scale
-    }))
-    : [...safePoints].reverse().map((point) => ({
-      x: centerX - point.radius * scale,
-      y: bottomY - point.height * scale
-    }));
-  const pathPoints = [...right, ...left];
-  return `M${pathPoints.map((point) => `${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(" L")} Z`;
+
+  return {
+    points: safePoints,
+    mapPoint(point, side = "right") {
+      const radius = finiteThumbnailValue(point.radius, 0);
+      const height = finiteThumbnailValue(point.height, 0);
+
+      return {
+        ...point,
+        x: side === "right" ? centerX + radius * scale : centerX - radius * scale,
+        y: bottomY - height * scale
+      };
+    }
+  };
 }
 
-function createThumbnail(points, className) {
+function thumbnailSegmentPath(snapshot, start, end, side, geometry) {
+  if (thumbnailStyleForSegment(snapshot, start.id, end.id) !== "curve") {
+    return `L${end.x.toFixed(1)} ${end.y.toFixed(1)}`;
+  }
+
+  const segmentId = segmentKey(start.id, end.id);
+  const control = geometry.mapPoint(thumbnailCurveControl(snapshot, segmentId, start, end), side);
+  return `Q${control.x.toFixed(1)} ${control.y.toFixed(1)} ${end.x.toFixed(1)} ${end.y.toFixed(1)}`;
+}
+
+function continueThumbnailPath(snapshot, mappedPoints, side, geometry) {
+  let d = "";
+
+  for (let index = 1; index < mappedPoints.length; index += 1) {
+    d += ` ${thumbnailSegmentPath(snapshot, mappedPoints[index - 1], mappedPoints[index], side, geometry)}`;
+  }
+
+  return d;
+}
+
+function thumbnailPath(source) {
+  const snapshot = thumbnailSnapshot(source);
+  const geometry = thumbnailGeometry(snapshot);
+  const right = geometry.points.map((point) => geometry.mapPoint(point, "right"));
+  const leftReverse = geometry.points.toReversed
+    ? geometry.points.toReversed().map((point) => geometry.mapPoint(point, "left"))
+    : [...geometry.points].reverse().map((point) => geometry.mapPoint(point, "left"));
+
+  return `M${right[0].x.toFixed(1)} ${right[0].y.toFixed(1)}${continueThumbnailPath(snapshot, right, "right", geometry)} L${leftReverse[0].x.toFixed(1)} ${leftReverse[0].y.toFixed(1)}${continueThumbnailPath(snapshot, leftReverse, "left", geometry)} Z`;
+}
+
+function createThumbnail(source, className) {
   const svgElement = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
   const centerLine = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -2438,7 +3037,7 @@ function createThumbnail(points, className) {
   centerLine.setAttribute("stroke", "#d6cab6");
   centerLine.setAttribute("stroke-width", "1");
   centerLine.setAttribute("stroke-dasharray", "4 4");
-  path.setAttribute("d", thumbnailPath(points));
+  path.setAttribute("d", thumbnailPath(source));
   path.setAttribute("fill", "#cdbb9c");
   path.setAttribute("stroke", "#302d28");
   path.setAttribute("stroke-width", "1.7");
@@ -2515,7 +3114,7 @@ function renderProjectSummary() {
   size.textContent = `${formatPotDimension(metrics.height)} x ${formatPotDimension(metrics.diameter)} ${metrics.basis}`;
   clay.textContent = `${estimate.pounds.toFixed(1)} lb clay`;
   meta.append(title, size, clay);
-  summary.append(createThumbnail(state.outerPoints, "current-pot-thumb"), meta);
+  summary.append(createThumbnail(persistedStateSnapshot(), "current-pot-thumb"), meta);
   projectSheetBody.appendChild(summary);
 }
 
@@ -2584,7 +3183,7 @@ function renderTemplatePicker() {
     text.textContent = template.detail;
     meta.className = "template-meta";
     meta.append(title, text);
-    button.append(createThumbnail(template.points, "template-thumb"), meta);
+    button.append(createThumbnail(starterStateForTemplate(template), "template-thumb"), meta);
     button.addEventListener("click", () => createPotFromTemplate(template));
     grid.appendChild(button);
   });
@@ -2628,7 +3227,7 @@ function renderSavedPots() {
     date.textContent = pot.id === currentPotId ? "Open now" : formatUpdatedDate(pot.updatedAt);
     meta.className = "saved-pot-meta";
     meta.append(title, detail, date);
-    button.append(createThumbnail(pot.state.outerPoints, "saved-pot-thumb"), meta);
+    button.append(createThumbnail(pot.state, "saved-pot-thumb"), meta);
     button.addEventListener("click", () => openSavedPot(pot.id));
     list.appendChild(button);
   });
@@ -2933,22 +3532,35 @@ function updatePointFromDrag(line, pointId, svgPoint) {
     return;
   }
 
-  const points = line === "outer" ? state.outerPoints : state.innerPoints;
-  const point = points.find((candidate) => candidate.id === pointId);
   const g = profileGeometry();
-
-  if (!point) {
+  const points = line === "outer" ? state.outerPoints : state.innerPoints;
+  if (!points.some((candidate) => candidate.id === pointId)) {
     return;
   }
 
-  point.radius = g.radiusForX(svgPoint.x);
-
-  if (point.fixed !== "base") {
-    point.height = g.heightForY(svgPoint.y);
-  }
-
   selectPoint(line, pointId);
-  normalizeState();
+  applyGuardedProfileEdit(() => {
+    const editPoints = line === "outer" ? state.outerPoints : state.innerPoints;
+    const point = editPoints.find((candidate) => candidate.id === pointId);
+
+    if (!point) {
+      return;
+    }
+
+    point.radius = g.radiusForX(svgPoint.x);
+
+    if (point.fixed !== "base") {
+      const bounds = selectedPointHeightBounds(line, editPoints, point);
+      const nextHeight = clamp(g.heightForY(svgPoint.y), bounds.min, bounds.max);
+
+      if (isLinkedFloorHeightControl(line, point)) {
+        setLinkedFloorHeight(nextHeight, isInteriorFloorPoint(point) ? point : null);
+        return;
+      }
+
+      point.height = nextHeight;
+    }
+  });
 }
 
 function updateCurveFromDrag(line, segmentId, svgPoint) {
@@ -2968,13 +3580,13 @@ function updateCurveFromDrag(line, segmentId, svgPoint) {
   const g = profileGeometry();
   const minHeight = Math.min(first.height, second.height);
   const maxHeight = Math.max(first.height, second.height);
-  setCurveControlForLine(line, segmentId, {
-    height: clamp(g.heightForY(svgPoint.y), minHeight, maxHeight),
-    radius: clamp(g.radiusForX(svgPoint.x), 0.12, 4)
-  });
-
   selectSegment(segmentId, line);
-  normalizeState();
+  applyGuardedProfileEdit(() => {
+    setCurveControlForLine(line, segmentId, {
+      height: clamp(g.heightForY(svgPoint.y), minHeight, maxHeight),
+      radius: clamp(g.radiusForX(svgPoint.x), 0.12, 4)
+    });
+  });
 }
 
 function pointerDistance(first, second) {
@@ -3504,10 +4116,17 @@ compactKindButtons.forEach((button) => {
 
 uniformWallToggle.addEventListener("change", () => {
   const nextUniformWall = uniformWallToggle.checked;
-  if (!nextUniformWall && state.uniformWall) {
-    copyCurrentInnerProfileToCustom();
+  const accepted = applyGuardedProfileEdit(() => {
+    if (!nextUniformWall && state.uniformWall) {
+      copyCurrentInnerProfileToCustom();
+    }
+    state.uniformWall = nextUniformWall;
+  });
+
+  if (!accepted) {
+    uniformWallToggle.checked = state.uniformWall;
   }
-  state.uniformWall = nextUniformWall;
+
   render();
 });
 

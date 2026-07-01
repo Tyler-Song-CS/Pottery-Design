@@ -194,6 +194,28 @@ button {
   font-weight: 760;
 }
 
+.canvas-meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.basis-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid #cabda7;
+  border-radius: 999px;
+  color: var(--ink);
+  background: rgba(239, 229, 211, 0.7);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .legend {
   display: flex;
   gap: 12px;
