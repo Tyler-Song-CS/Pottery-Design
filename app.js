@@ -44,6 +44,7 @@ const baseViewBox = {
 const minimumProfileClearance = 0.08;
 const collisionCurveTolerance = minimumProfileClearance * 0.08;
 const collisionMaxSubdivisionDepth = 10;
+const uniformCurveSampleSteps = 18;
 
 const canvasView = { ...baseViewBox };
 const activePointers = new Map();
@@ -565,6 +566,10 @@ function arScale(value) {
 }
 
 function sampleProfileForAr(line, points, sampleSteps = 10) {
+  if (line === "inner" && state.uniformWall) {
+    return sampleUniformInnerProfile(points, sampleSteps);
+  }
+
   const samples = [];
 
   points.slice(0, -1).forEach((point, index) => {
@@ -797,6 +802,22 @@ function addQuadraticCollisionSegments(segments, segmentId, first, control, seco
 }
 
 function profileCollisionSegments(line, points) {
+  if (line === "inner" && state.uniformWall) {
+    const segments = [];
+
+    points.slice(0, -1).forEach((point, index) => {
+      const nextPoint = points[index + 1];
+      const segmentId = segmentKey(point.id, nextPoint.id);
+      const samples = uniformInnerSegmentSamplePoints(segmentId, 24);
+
+      samples.slice(0, -1).forEach((sample, sampleIndex) => {
+        addCollisionSegment(segments, segmentId, sample, samples[sampleIndex + 1]);
+      });
+    });
+
+    return segments;
+  }
+
   const segments = [];
 
   points.slice(0, -1).forEach((point, index) => {
@@ -1772,7 +1793,7 @@ function derivedInnerPoints() {
     points.push({
       ...radialPoint,
       height,
-      radius: constrainInnerRadiusAtHeight(offset.radius, height)
+      radius: Math.max(0.12, offset.radius)
     });
   });
 
@@ -1791,19 +1812,13 @@ function derivedInnerPoints() {
     : footPoint
       ? Math.max(0.12, footPoint.radius - state.wallThickness)
       : Math.max(0.12, state.outerPoints[0].radius - state.wallThickness);
-  const constrainedFloorRadius = constrainInnerRadiusAtHeight(floorRadius, floorHeight);
 
   points.push({
     id: "floor",
     label: "Interior floor",
     height: floorHeight,
-    radius: constrainedFloorRadius,
+    radius: floorRadius,
     fixed: "floor"
-  });
-
-  normalizeProfilePointOrder(points, 0.15, maxOuterHeight());
-  points.forEach((point) => {
-    point.radius = constrainInnerRadiusAtHeight(point.radius, point.height);
   });
 
   return points;
@@ -2196,6 +2211,114 @@ function quadraticTangent(first, control, second, t) {
   };
 }
 
+function profilePointAt(first, second, t) {
+  return {
+    radius: first.radius + (second.radius - first.radius) * t,
+    height: first.height + (second.height - first.height) * t
+  };
+}
+
+function thicknessForSegmentAt(first, second, t) {
+  return thicknessForPoint(first) + (thicknessForPoint(second) - thicknessForPoint(first)) * t;
+}
+
+function normalOffsetPointOnOuterLine(first, second, t) {
+  const point = profilePointAt(first, second, t);
+  const normal = inwardNormalForSegment(first, second);
+
+  return offsetPoint(point, normal, thicknessForSegmentAt(first, second, t));
+}
+
+function normalOffsetPointOnOuterCurve(first, control, second, t) {
+  const point = quadraticPoint(first, control, second, t);
+  const tangent = quadraticTangent(first, control, second, t);
+  const normal = inwardNormalForVector(tangent.radius, tangent.height);
+
+  return offsetPoint(point, normal, thicknessForSegmentAt(first, second, t));
+}
+
+function correctedUniformOffsetPoint(offset, offsetStart, offsetEnd, targetStart, targetEnd, t) {
+  return {
+    radius: offset.radius
+      + (targetStart.radius - offsetStart.radius) * (1 - t)
+      + (targetEnd.radius - offsetEnd.radius) * t,
+    height: offset.height
+      + (targetStart.height - offsetStart.height) * (1 - t)
+      + (targetEnd.height - offsetEnd.height) * t
+  };
+}
+
+function uniformInnerSegmentSamplePoints(segmentId, sampleSteps = uniformCurveSampleSteps) {
+  const outerSegmentId = outerSegmentIdForInner(segmentId);
+  const [outerFirst, outerSecond] = pointsForSegment("outer", outerSegmentId);
+  const [innerFirst, innerSecond] = pointsForSegment("inner", segmentId);
+
+  if (!outerFirst || !outerSecond || !innerFirst || !innerSecond) {
+    return [];
+  }
+
+  const style = styleForSegment(outerFirst.id, outerSecond.id);
+  const steps = style === "curve" ? Math.max(1, Math.round(sampleSteps)) : 1;
+  const outerControl = style === "curve"
+    ? ensureSegmentCurveControl("outer", outerSegmentId, outerFirst, outerSecond)
+    : null;
+  const offsetAt = (t) => style === "curve"
+    ? normalOffsetPointOnOuterCurve(outerFirst, outerControl, outerSecond, t)
+    : normalOffsetPointOnOuterLine(outerFirst, outerSecond, t);
+  const offsetStart = offsetAt(0);
+  const offsetEnd = offsetAt(1);
+  const samples = [];
+
+  for (let step = 0; step <= steps; step += 1) {
+    const t = step / steps;
+    const sample = correctedUniformOffsetPoint(
+      offsetAt(t),
+      offsetStart,
+      offsetEnd,
+      innerFirst,
+      innerSecond,
+      t
+    );
+
+    samples.push(sample);
+  }
+
+  return samples;
+}
+
+function sampleUniformInnerProfile(points, sampleSteps = uniformCurveSampleSteps) {
+  const samples = [];
+
+  points.slice(0, -1).forEach((point, index) => {
+    const nextPoint = points[index + 1];
+    const segmentSamples = uniformInnerSegmentSamplePoints(
+      segmentKey(point.id, nextPoint.id),
+      sampleSteps
+    );
+
+    if (segmentSamples.length === 0) {
+      if (index === 0) {
+        samples.push({ radius: point.radius, height: point.height });
+      }
+
+      samples.push({ radius: nextPoint.radius, height: nextPoint.height });
+      return;
+    }
+
+    if (samples.length === 0) {
+      samples.push(segmentSamples[0]);
+    } else if (pointDistance(samples.at(-1), segmentSamples[0]) > 0.002) {
+      samples.push(segmentSamples[0]);
+    }
+
+    segmentSamples.slice(1).forEach((sample) => {
+      samples.push(sample);
+    });
+  });
+
+  return samples;
+}
+
 function controlPointFromQuadraticMidpoint(first, midpoint, second) {
   return {
     radius: 2 * midpoint.radius - (first.radius + second.radius) / 2,
@@ -2212,7 +2335,7 @@ function innerControlFromOuter(segmentId, outerControl) {
 
     return {
       height: outerControl.height,
-      radius: constrainInnerRadiusAtHeight(outerControl.radius - offset, outerControl.height)
+      radius: Math.max(0.12, outerControl.radius - offset)
     };
   }
 
@@ -2222,15 +2345,9 @@ function innerControlFromOuter(segmentId, outerControl) {
   const innerMidpoint = offsetPoint(midpoint, normal, state.wallThickness);
   const control = controlPointFromQuadraticMidpoint(innerFirst, innerMidpoint, innerSecond);
 
-  const constrainedHeight = clamp(
-    control.height,
-    Math.min(innerFirst.height, innerSecond.height),
-    Math.max(innerFirst.height, innerSecond.height)
-  );
-
   return {
-    height: constrainedHeight,
-    radius: constrainInnerRadiusAtHeight(control.radius, constrainedHeight)
+    height: control.height,
+    radius: Math.max(0.12, control.radius)
   };
 }
 
@@ -2308,7 +2425,21 @@ function segmentPath(start, end, style, line = "outer") {
   }
 
   const side = start.x < profileGeometry().centerX ? "left" : "right";
-  const control = mappedCurveControl(line, segmentKey(start.id, end.id), side, start, end);
+  const segmentId = segmentKey(start.id, end.id);
+
+  if (line === "inner" && state.uniformWall && hasUniformCurveLink(line, segmentId)) {
+    const g = profileGeometry();
+    const samples = uniformInnerSegmentSamplePoints(segmentId);
+
+    if (samples.length > 1) {
+      return samples.slice(1).map((sample) => {
+        const mapped = g.mapPoint(sample, side);
+        return `L${mapped.x} ${mapped.y}`;
+      }).join(" ");
+    }
+  }
+
+  const control = mappedCurveControl(line, segmentId, side, start, end);
   return `Q${control.x} ${control.y} ${end.x} ${end.y}`;
 }
 
@@ -2332,6 +2463,24 @@ function pathThrough(mappedPoints, line = "outer") {
   return `M${mappedPoints[0].x} ${mappedPoints[0].y}${continuePathThrough(mappedPoints, line)}`;
 }
 
+function continueLinePathThrough(mappedPoints) {
+  let d = "";
+
+  for (let index = 1; index < mappedPoints.length; index += 1) {
+    d += ` L${mappedPoints[index].x} ${mappedPoints[index].y}`;
+  }
+
+  return d;
+}
+
+function linePathThrough(mappedPoints) {
+  if (mappedPoints.length === 0) {
+    return "";
+  }
+
+  return `M${mappedPoints[0].x} ${mappedPoints[0].y}${continueLinePathThrough(mappedPoints)}`;
+}
+
 function mappedOuter(side) {
   const g = profileGeometry();
   return state.outerPoints.map((point) => g.mapPoint(point, side));
@@ -2342,6 +2491,11 @@ function mappedInner(side) {
   return innerProfilePoints().map((point) => g.mapPoint(point, side));
 }
 
+function mappedUniformInner(side) {
+  const g = profileGeometry();
+  return sampleUniformInnerProfile(innerProfilePoints()).map((point) => g.mapPoint(point, side));
+}
+
 function shellPath() {
   const right = mappedOuter("right");
   const leftReverse = mappedOuter("left").reverse();
@@ -2349,11 +2503,15 @@ function shellPath() {
 }
 
 function innerHolePath() {
-  const right = mappedInner("right");
-  const leftReverse = mappedInner("left").reverse();
+  const right = state.uniformWall ? mappedUniformInner("right") : mappedInner("right");
+  const leftReverse = (state.uniformWall ? mappedUniformInner("left") : mappedInner("left")).reverse();
 
   if (right.length < 2 || leftReverse.length < 2) {
     return "";
+  }
+
+  if (state.uniformWall) {
+    return `${linePathThrough(right)} L${leftReverse[0].x} ${leftReverse[0].y}${continueLinePathThrough(leftReverse)} Z`;
   }
 
   return `${pathThrough(right, "inner")} L${leftReverse[0].x} ${leftReverse[0].y}${continuePathThrough(leftReverse, "inner")} Z`;
@@ -2392,9 +2550,13 @@ function segmentHitPath(points, line, segmentId, active) {
     return "";
   }
 
-  const start = g.mapPoint(first, "right");
-  const end = g.mapPoint(second, "right");
-  const d = `M${start.x} ${start.y} ${segmentPath(start, end, styleForLineSegment(line, first.id, second.id), line)}`;
+  const d = line === "inner" && state.uniformWall && hasUniformCurveLink(line, segmentId)
+    ? linePathThrough(uniformInnerSegmentSamplePoints(segmentId).map((point) => g.mapPoint(point, "right")))
+    : (() => {
+      const start = g.mapPoint(first, "right");
+      const end = g.mapPoint(second, "right");
+      return `M${start.x} ${start.y} ${segmentPath(start, end, styleForLineSegment(line, first.id, second.id), line)}`;
+    })();
   const activePath = active
     ? `<path class="svg-segment-active" d="${d}"/>`
     : "";
@@ -2483,6 +2645,8 @@ function renderCanvas() {
   const outerLeft = mappedOuter("left");
   const innerRight = mappedInner("right");
   const innerLeft = mappedInner("left");
+  const uniformInnerRight = state.uniformWall ? mappedUniformInner("right") : [];
+  const uniformInnerLeft = state.uniformWall ? mappedUniformInner("left") : [];
   const activePoints = activeLinePoints();
   const handles = activePoints.map((point) => handle(point, state.editingLine)).join("");
   const segmentHits = renderSegmentHits(activePoints, state.editingLine);
@@ -2499,8 +2663,8 @@ function renderCanvas() {
     <path class="svg-clay" fill-rule="evenodd" d="${shellPath()} ${innerHolePath()}"/>
     <path class="svg-outer" d="${pathThrough(outerRight, "outer")}"/>
     <path class="svg-outer" d="${pathThrough(outerLeft, "outer")}"/>
-    <path class="svg-inner" d="${pathThrough(innerRight, "inner")}"/>
-    <path class="svg-inner" d="${pathThrough(innerLeft, "inner")}"/>
+    <path class="svg-inner" d="${state.uniformWall ? linePathThrough(uniformInnerRight) : pathThrough(innerRight, "inner")}"/>
+    <path class="svg-inner" d="${state.uniformWall ? linePathThrough(uniformInnerLeft) : pathThrough(innerLeft, "inner")}"/>
     <path class="svg-outer" d="M${outerRimRight.x} ${outerRimRight.y} L${innerRimRight.x} ${innerRimRight.y}"/>
     <path class="svg-outer" d="M${outerRimLeft.x} ${outerRimLeft.y} L${innerRimLeft.x} ${innerRimLeft.y}"/>
     <path class="svg-inner" d="M${innerFloorLeft.x} ${innerFloorLeft.y} L${innerFloorRight.x} ${innerFloorRight.y}"/>
